@@ -1,6 +1,9 @@
 .idea/
 /.pylintrc
 
+/utils/__pycache__/
+
 /saved_models
 /saved_outputs
 /results
+/logs

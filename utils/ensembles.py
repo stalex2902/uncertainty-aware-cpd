@@ -1,4 +1,5 @@
-from . import datasets, mmd, model_utils, cpd_models, klcpd, tscp
+from . import datasets, mmd, model_utils, klcpd, tscp
+from .cpd_models import fix_seeds
 
 import os
 
@@ -96,7 +97,7 @@ class EnsembleCPDModel(ABC):
 
         self.models_list = []
         for i in range(self.n_models):
-            cpd_models.fix_seeds(i)
+            fix_seeds(i)
 
             curr_model = model_utils.get_models_list(
                 self.args, self.train_datasets_list[i], self.test_dataset
@@ -122,7 +123,7 @@ class EnsembleCPDModel(ABC):
             for i, (cpd_model, train_dataset) in enumerate(
                 zip(self.models_list, self.train_datasets_list)
             ):
-                cpd_models.fix_seeds(i)
+                fix_seeds(i)
 
                 print(f"\nFitting model number {i + 1}.")
                 trainer = pl.Trainer(

@@ -7,7 +7,7 @@ import torch
 from torch.utils.data import Subset
 
 from abc import ABC
-from typing import Tuple
+from typing import Tuple, Optional, Union
 
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -106,13 +106,8 @@ class EnsembleCPDModel(ABC):
             ]  # list consists of 1 model as, currently, we do not work with 'combined' models
             self.models_list.append(curr_model)
 
-    def fit(
-        self, monitor: str = "val_loss", patience: int = 10, min_delta: float = 0.0
-    ) -> None:
-        """Fit all the models on the corresponding train datasets.
-
-        :params monitor, patience: Early Stopping parameters
-        """
+    def fit(self) -> None:
+        """Fit all the models on the corresponding train datasets."""
         logger = TensorBoardLogger(
             save_dir=f'logs/{self.args["experiments_name"]}',
             name=self.args["model_type"],
@@ -120,9 +115,7 @@ class EnsembleCPDModel(ABC):
 
         if not self.fitted:
             self.initialize_models_list()
-            for i, (cpd_model, train_dataset) in enumerate(
-                zip(self.models_list, self.train_datasets_list)
-            ):
+            for i, cpd_model in enumerate(self.models_list):
                 fix_seeds(i)
 
                 print(f"\nFitting model number {i + 1}.")
@@ -133,9 +126,10 @@ class EnsembleCPDModel(ABC):
                     benchmark=True,
                     check_val_every_n_epoch=1,
                     logger=logger,
-                    callbacks=EarlyStopping(
-                        monitor=monitor, min_delta=min_delta, patience=patience
-                    ),
+                    #callbacks=EarlyStopping(
+                    #    monitor=monitor, min_delta=min_delta, patience=patience
+                    #),
+                    callbacks=EarlyStopping(**self.args["early_stopping"]),
                 )
                 trainer.fit(cpd_model)
 
@@ -313,7 +307,7 @@ class CusumEnsembleCPDModel(EnsembleCPDModel):
         self,
         args: dict,
         n_models: int,
-        global_sigma: float = None,
+        global_sigma: Optional[Union[float, str]] = None, # float / 'local_start' / 'local_whole' / None (for 'non-cond' variants)
         seed: int = 0,
         boot_sample_size: int = None,
         train_anomaly_num: int = None,
@@ -345,6 +339,11 @@ class CusumEnsembleCPDModel(EnsembleCPDModel):
             "old",
             "new_criteria",
         ], f"Wrong CUSUM mode: {cusum_mode}"
+        
+        if cusum_mode == "new_criteria":
+            assert lambda_null is not None, "Specify lambda_null for 'new_crit'"
+            #assert lambda_inf is not None, "Specify lambda_inf for 'new_crit'"
+            assert half_wnd is not None, "Specify half_wnd for 'new_crit'"
 
         self.cusum_threshold = cusum_threshold
         self.cusum_mode = cusum_mode
@@ -354,7 +353,17 @@ class CusumEnsembleCPDModel(EnsembleCPDModel):
             assert (
                 global_sigma is not None
             ), "Global sigma is required for non-conditional statisctics."
-            self.global_sigma = global_sigma
+            assert (
+                isinstance(global_sigma, float) or isinstance(global_sigma, str)
+            ), "If not None, global_sigma should be either str or float"
+            
+            if isinstance(global_sigma, str):
+                assert (
+                    global_sigma in ["local_start", "local_whole"]
+                ), "Unknow local global_sigma type"
+                assert half_wnd is not None, "Need window size for local global_sigma"
+                
+        self.global_sigma = global_sigma
 
         self.lambda_null = lambda_null
         self.lambda_inf = lambda_inf
@@ -369,6 +378,18 @@ class CusumEnsembleCPDModel(EnsembleCPDModel):
 
         normal_to_change_stat = torch.zeros(batch_size, seq_len).to(series_batch.device)
         change_mask = torch.zeros(batch_size, seq_len).to(series_batch.device)
+        
+        # TODO: check! 
+        if self.global_sigma == "local_start":
+            global_sigma = series_std_batch[:, : 2 * self.half_wnd].mean(axis=1)
+        elif self.global_sigma == "local_whole":
+            global_sigma = series_std_batch.mean(axis=1)
+        else:
+            global_sigma = self.global_sigma
+            
+        #print("series_batch:", series_batch.shape)
+        #print("series_std_batch:", series_std_batch.shape)
+        #print("global_sigma:", global_sigma.shape)
 
         for i in range(1, seq_len):
             # old CUSUM
@@ -377,17 +398,16 @@ class CusumEnsembleCPDModel(EnsembleCPDModel):
                     t = (series_batch[:, i] - series_batch[:, i - 1]) / (
                         series_std_batch[:, i] + EPS
                     )
-
                 else:
                     t = series_batch[:, i] - series_batch[:, i - 1] / (
-                        self.global_sigma + EPS
+                        global_sigma + EPS
                     )
             # new (correct) CUSUM
             else:
                 if self.conditional:
                     t = (series_batch[:, i] - 0.5) / (series_std_batch[:, i] ** 2 + EPS)
                 else:
-                    t = (series_batch[:, i] - 0.5) / (self.global_sigma**2 + EPS)
+                    t = (series_batch[:, i] - 0.5) / (global_sigma ** 2 + EPS)
 
             normal_to_change_stat[:, i] = torch.maximum(
                 torch.zeros(batch_size).to(series_batch.device),
@@ -405,20 +425,31 @@ class CusumEnsembleCPDModel(EnsembleCPDModel):
     def new_scores_aggregator(
         self, series_batch: torch.Tensor, series_std_batch: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        assert self.lambda_null is not None, "Specify lambda_null"
-        assert self.lambda_inf is not None, "Specify lambda_inf"
-        assert self.half_wnd is not None, "Specify half_wnd"
-
         batch_size, seq_len = series_batch.shape
 
         normal_to_change_stat = torch.zeros(batch_size, seq_len).to(series_batch.device)
         change_mask = torch.zeros(batch_size, seq_len).to(series_batch.device)
+        
+        # TODO: check! 
+        if self.global_sigma == "local_start":
+            global_sigma = series_std_batch[:, : 2 * self.half_wnd].mean(axis=1)
+        elif self.global_sigma == "local_whole":
+            global_sigma = series_std_batch.mean(axis=1)
+        else:
+            global_sigma = self.global_sigma
+            
+        if self.lambda_inf is None:
+            # compute lambda_inf based on the local global_sigma
+            lambda_inf = 1. / global_sigma ** 2
+        else:
+            lambda_inf = self.lambda_inf
+        lambda_null = self.lambda_null
 
         for i in range(1, seq_len):
             if self.conditional:
                 t = (series_batch[:, i] - 0.5) / (series_std_batch[:, i] ** 2 + EPS)
             else:
-                t = (series_batch[:, i] - 0.5) / (self.global_sigma**2 + EPS)
+                t = (series_batch[:, i] - 0.5) / (global_sigma ** 2 + EPS)
 
             wnd_start = max(0, i - self.half_wnd)
             wnd_end = min(seq_len, i + self.half_wnd + 1)
@@ -429,7 +460,7 @@ class CusumEnsembleCPDModel(EnsembleCPDModel):
             )
 
             normal_to_change_stat[:, i] = torch.maximum(
-                (self.lambda_inf - self.lambda_null) * windom_var_sum,
+                (lambda_inf - lambda_null) * windom_var_sum,
                 normal_to_change_stat[:, i - 1] + t,
             )
 
@@ -552,7 +583,6 @@ class DistanceEnsembleCPDModel(EnsembleCPDModel):
         threshold: float = 0.1,
         distance: str = "mmd",
         kernel: str = "rbf",
-        
     ) -> None:
         super().__init__(args, n_models, boot_sample_size, seed, train_anomaly_num)
         

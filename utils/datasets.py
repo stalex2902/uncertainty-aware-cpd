@@ -3,7 +3,7 @@ from .cpd_models import fix_seeds
 
 import collections
 
-collections.Iterable = collections.abc.Iterable  # FOT FIX
+collections.Iterable = collections.abc.Iterable  # HOT FIX
 from collections import defaultdict
 
 from typing import Dict, List, Optional, Tuple, Union
@@ -13,7 +13,7 @@ import pickle
 import random
 import glob
 
-#import av
+import av
 import numpy as np
 import pandas as pd
 import torch

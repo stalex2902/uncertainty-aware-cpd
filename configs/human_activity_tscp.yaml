@@ -22,6 +22,8 @@ learning:
   epochs: 200
   decay_steps: 1000
   grad_clip: 0. # no clipping
+  accelerator: cuda
+  devices: 1
 
 loss:
   temperature: 0.1

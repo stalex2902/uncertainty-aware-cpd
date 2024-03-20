@@ -332,7 +332,7 @@ def collect_model_predictions_on_set(
 
         # collect model's predictions once and reuse them
         #for test_inputs, test_labels in tqdm(test_loader):
-        for test_inputs, test_labels in test_loader:
+        for test_inputs, test_labels in tqdm(test_loader):
             test_out, test_uncertainties, test_labels = get_models_predictions(
                 test_inputs,
                 test_labels,
@@ -651,7 +651,8 @@ def evaluation_pipeline(
             print("No need in threshold list for CUSUM. Take threshold = 0.5.")
 
     for threshold in threshold_list:
-        final_f1_margin_dict[threshold] = {}
+        if margin_list is not None: 
+            final_f1_margin_dict[threshold] = {}
 
         (
             (TN, FP, FN, TP, mean_delay, mean_fp_delay, cover),
@@ -838,9 +839,6 @@ def evaluate_cusum_ensemble_model(
         )
         cusum_model.load_models_list(save_path)
 
-        # if verbose:
-        #    print("cusum_th:", cusum_th)
-
         metrics_local, (_, max_f1_margins_dict), _, _ = evaluation_pipeline(
             model=cusum_model,
             test_dataloader=output_dataloader,
@@ -871,6 +869,7 @@ def evaluate_cusum_ensemble_model(
             _,
             max_cover,
         ) = metrics_local
+        
         res_dict[cusum_th] = (
             audc,
             best_time_to_FA,

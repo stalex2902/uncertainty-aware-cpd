@@ -1,17 +1,17 @@
-from . import datasets, mmd, model_utils, klcpd, tscp
-from .cpd_models import fix_seeds
-
 import os
-
-import torch
-from torch.utils.data import Subset
-
 from abc import ABC
-from typing import Tuple, Optional, Union
+from typing import Optional, Tuple, Union
 
+import distances
 import pytorch_lightning as pl
-from pytorch_lightning.loggers import TensorBoardLogger
+import torch
+from baselines import klcpd, tscp
+from datasets import datasets
+from models import model_utils
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
+from pytorch_lightning.loggers import TensorBoardLogger
+from torch.utils.data import Subset
+from utils.fix_seeds import fix_seeds
 
 EPS = 1e-6
 
@@ -24,7 +24,7 @@ class EnsembleCPDModel(ABC):
         args: dict,
         n_models: int,
         boot_sample_size: int = None,
-        seed: int = 0,
+        # seed: int = 0,
         train_anomaly_num: int = None,
     ) -> None:
         """Initialize EnsembleCPDModel.
@@ -126,9 +126,9 @@ class EnsembleCPDModel(ABC):
                     benchmark=True,
                     check_val_every_n_epoch=1,
                     logger=logger,
-                    #callbacks=EarlyStopping(
+                    # callbacks=EarlyStopping(
                     #    monitor=monitor, min_delta=min_delta, patience=patience
-                    #),
+                    # ),
                     callbacks=EarlyStopping(**self.args["early_stopping"]),
                 )
                 trainer.fit(cpd_model)
@@ -294,7 +294,7 @@ class EnsembleCPDModel(ABC):
         for model, path in zip(self.models_list, paths_list):
             try:
                 model.load_state_dict(torch.load(path_to_folder + "/" + path))
-            except:
+            except RuntimeError:
                 model.model.load_state_dict(torch.load(path_to_folder + "/" + path))
 
         self.fitted = True
@@ -307,7 +307,9 @@ class CusumEnsembleCPDModel(EnsembleCPDModel):
         self,
         args: dict,
         n_models: int,
-        global_sigma: Optional[Union[float, str]] = None, # float / 'local_start' / 'local_whole' / None (for 'non-cond' variants)
+        global_sigma: Optional[
+            Union[float, str]
+        ] = None,  # float / 'local_start' / 'local_whole' / None (for 'non-cond' variants)
         seed: int = 0,
         boot_sample_size: int = None,
         train_anomaly_num: int = None,
@@ -339,10 +341,10 @@ class CusumEnsembleCPDModel(EnsembleCPDModel):
             "old",
             "new_criteria",
         ], f"Wrong CUSUM mode: {cusum_mode}"
-        
+
         if cusum_mode == "new_criteria":
             assert lambda_null is not None, "Specify lambda_null for 'new_crit'"
-            #assert lambda_inf is not None, "Specify lambda_inf for 'new_crit'"
+            # assert lambda_inf is not None, "Specify lambda_inf for 'new_crit'"
             assert half_wnd is not None, "Specify half_wnd for 'new_crit'"
 
         self.cusum_threshold = cusum_threshold
@@ -353,16 +355,17 @@ class CusumEnsembleCPDModel(EnsembleCPDModel):
             assert (
                 global_sigma is not None
             ), "Global sigma is required for non-conditional statisctics."
-            assert (
-                isinstance(global_sigma, float) or isinstance(global_sigma, str)
+            assert isinstance(global_sigma, float) or isinstance(
+                global_sigma, str
             ), "If not None, global_sigma should be either str or float"
-            
+
             if isinstance(global_sigma, str):
-                assert (
-                    global_sigma in ["local_start", "local_whole"]
-                ), "Unknow local global_sigma type"
+                assert global_sigma in [
+                    "local_start",
+                    "local_whole",
+                ], "Unknow local global_sigma type"
                 assert half_wnd is not None, "Need window size for local global_sigma"
-                
+
         self.global_sigma = global_sigma
 
         self.lambda_null = lambda_null
@@ -378,18 +381,14 @@ class CusumEnsembleCPDModel(EnsembleCPDModel):
 
         normal_to_change_stat = torch.zeros(batch_size, seq_len).to(series_batch.device)
         change_mask = torch.zeros(batch_size, seq_len).to(series_batch.device)
-        
-        # TODO: check! 
+
+        # TODO: check!
         if self.global_sigma == "local_start":
             global_sigma = series_std_batch[:, : 2 * self.half_wnd].mean(axis=1)
         elif self.global_sigma == "local_whole":
             global_sigma = series_std_batch.mean(axis=1)
         else:
             global_sigma = self.global_sigma
-            
-        #print("series_batch:", series_batch.shape)
-        #print("series_std_batch:", series_std_batch.shape)
-        #print("global_sigma:", global_sigma.shape)
 
         for i in range(1, seq_len):
             # old CUSUM
@@ -407,7 +406,7 @@ class CusumEnsembleCPDModel(EnsembleCPDModel):
                 if self.conditional:
                     t = (series_batch[:, i] - 0.5) / (series_std_batch[:, i] ** 2 + EPS)
                 else:
-                    t = (series_batch[:, i] - 0.5) / (global_sigma ** 2 + EPS)
+                    t = (series_batch[:, i] - 0.5) / (global_sigma**2 + EPS)
 
             normal_to_change_stat[:, i] = torch.maximum(
                 torch.zeros(batch_size).to(series_batch.device),
@@ -429,18 +428,18 @@ class CusumEnsembleCPDModel(EnsembleCPDModel):
 
         normal_to_change_stat = torch.zeros(batch_size, seq_len).to(series_batch.device)
         change_mask = torch.zeros(batch_size, seq_len).to(series_batch.device)
-        
-        # TODO: check! 
+
+        # TODO: check!
         if self.global_sigma == "local_start":
             global_sigma = series_std_batch[:, : 2 * self.half_wnd].mean(axis=1)
         elif self.global_sigma == "local_whole":
             global_sigma = series_std_batch.mean(axis=1)
         else:
             global_sigma = self.global_sigma
-            
+
         if self.lambda_inf is None:
             # compute lambda_inf based on the local global_sigma
-            lambda_inf = 1. / global_sigma ** 2
+            lambda_inf = 1.0 / global_sigma**2
         else:
             lambda_inf = self.lambda_inf
         lambda_null = self.lambda_null
@@ -449,7 +448,7 @@ class CusumEnsembleCPDModel(EnsembleCPDModel):
             if self.conditional:
                 t = (series_batch[:, i] - 0.5) / (series_std_batch[:, i] ** 2 + EPS)
             else:
-                t = (series_batch[:, i] - 0.5) / (global_sigma ** 2 + EPS)
+                t = (series_batch[:, i] - 0.5) / (global_sigma**2 + EPS)
 
             wnd_start = max(0, i - self.half_wnd)
             wnd_end = min(seq_len, i + self.half_wnd + 1)
@@ -585,16 +584,26 @@ class DistanceEnsembleCPDModel(EnsembleCPDModel):
         kernel: str = "rbf",
     ) -> None:
         super().__init__(args, n_models, boot_sample_size, seed, train_anomaly_num)
-        
-        assert anchor_window_type in ["sliding", "start", "prev", "combined"], "Unknown window type"
-        assert distance in ["mmd", "cosine", "wasserstein"], "Unknown distance type"
-        
+
+        assert anchor_window_type in [
+            "sliding",
+            "start",
+            "prev",
+            "combined",
+        ], "Unknown window type"
+        assert distance in [
+            "mmd",
+            "cosine",
+            "wasserstein_1d",
+            "wasserstein_nd",
+        ], "Unknown distance type"
+
         if distance == "mmd":
             assert kernel in [
                 "rbf",
                 "multiscale",
             ], f"Wrong kernel type: {kernel}."
-        
+
         self.anchor_window_type = anchor_window_type
         self.distance = distance
         self.window_size = window_size
@@ -602,19 +611,14 @@ class DistanceEnsembleCPDModel(EnsembleCPDModel):
         self.kernel = kernel
 
     def distance_detector(self, ensemble_preds: torch.Tensor):
-        if self.anchor_window_type == "sliding": # what is this 'sliding' mode?
-            scores = mmd.sliding_window_mmd_batch(
-                ensemble_preds, window_size=self.window_size, kernel=self.kernel
-            )
-        else:
-            # anchor windows: 'start', 'prev', or 'combined'
-            scores = mmd.anchor_window_detector_batch(
-                ensemble_preds,
-                window_size=self.window_size,
-                distance=self.distance,
-                kernel=self.kernel,
-                anchor_window_type=self.anchor_window_type
-            )
+        # anchor windows: 'start', 'prev', or 'combined'
+        scores = distances.anchor_window_detector_batch(
+            ensemble_preds,
+            window_size=self.window_size,
+            distance=self.distance,
+            kernel=self.kernel,
+            anchor_window_type=self.anchor_window_type,
+        )
         labels = (scores > self.threshold).to(torch.int)
 
         return labels, scores

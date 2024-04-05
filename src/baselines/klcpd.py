@@ -1,15 +1,14 @@
 """Functions & models for KL-CPD baseline training and testing."""
-from typing import List, Optional, Tuple
-import math
-import numpy as np
 
+import math
+from typing import List, Optional, Tuple
+
+import numpy as np
+import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 from torch.utils.data import DataLoader, Dataset
-
-import pytorch_lightning as pl
 
 
 # --------------------------------------------------------------------------------------#
@@ -221,7 +220,7 @@ def get_klcpd_output_scaled(
     """
     device = kl_cpd_model.device
     batch = batch.to(device).float()
-    sigma_var = kl_cpd_model.sigma_var.to(device)
+    # sigma_var = kl_cpd_model.sigma_var.to(device)
 
     if len(batch.shape) <= 4:
         seq_len = batch.shape[1]
@@ -647,7 +646,7 @@ class KLCPD(pl.LightningModule):
                 *all_data,
                 self.args["loss"]["lambda_ae"],
                 self.args["loss"]["lambda_real"],
-                self.sigma_var.to(self.device)
+                self.sigma_var.to(self.device),
             )
             loss_disc = (-1) * loss_disc
 

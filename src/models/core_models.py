@@ -1,49 +1,76 @@
-""" Core models for our experiments."""
-import torch
-import torch.nn as nn
+"""Core models for our experiments."""
 
 from typing import List, Optional
 
+import torch
+import torch.nn as nn
+
+
 class LayerNormLSTM(nn.Module):
-    def __init__(self, input_size, hidden_size, batch_first=True, ln_type:Optional[str] = 'after'):
+    def __init__(
+        self,
+        input_size,
+        hidden_size,
+        batch_first=True,
+        ln_type: Optional[str] = "after",
+    ):
         super().__init__()
-        
+
         self.input_dim = input_size
         self.hidden_dim = hidden_size
         self.batch_first = batch_first
 
-        if ln_type == 'before':
-            #print("Add LayerNorm BEFORE each Linear layer")
+        if ln_type == "before":
+            # print("Add LayerNorm BEFORE each Linear layer")
             self.linear_w = nn.ModuleList(
                 [
-                    nn.Sequential(nn.LayerNorm(self.input_dim), nn.Linear(self.input_dim, self.hidden_dim)) for _ in range(4)
+                    nn.Sequential(
+                        nn.LayerNorm(self.input_dim),
+                        nn.Linear(self.input_dim, self.hidden_dim),
+                    )
+                    for _ in range(4)
                 ]
             )
             self.linear_u = nn.ModuleList(
                 [
-                    nn.Sequential(nn.LayerNorm(self.hidden_dim), nn.Linear(self.hidden_dim, self.hidden_dim)) for _ in range(4)
+                    nn.Sequential(
+                        nn.LayerNorm(self.hidden_dim),
+                        nn.Linear(self.hidden_dim, self.hidden_dim),
+                    )
+                    for _ in range(4)
                 ]
             )
         elif ln_type == "after":
-            #print("Add LayerNorm AFTER each Linear layer")
+            # print("Add LayerNorm AFTER each Linear layer")
             self.linear_w = nn.ModuleList(
                 [
-                    nn.Sequential(nn.Linear(self.input_dim, self.hidden_dim), nn.LayerNorm(self.hidden_dim)) for _ in range(4)
+                    nn.Sequential(
+                        nn.Linear(self.input_dim, self.hidden_dim),
+                        nn.LayerNorm(self.hidden_dim),
+                    )
+                    for _ in range(4)
                 ]
             )
             self.linear_u = nn.ModuleList(
                 [
-                    nn.Sequential(nn.Linear(self.hidden_dim, self.hidden_dim), nn.LayerNorm(self.hidden_dim)) for _ in range(4)
+                    nn.Sequential(
+                        nn.Linear(self.hidden_dim, self.hidden_dim),
+                        nn.LayerNorm(self.hidden_dim),
+                    )
+                    for _ in range(4)
                 ]
             )
-            
-        elif ln_type == "none":
-            #print("DON'T add LayerNorm")
-            self.linear_w = nn.ModuleList([nn.Linear(self.input_dim, self.hidden_dim) for _ in range(4)])
-            self.linear_u = nn.ModuleList([nn.Linear(self.hidden_dim, self.hidden_dim) for _ in range(4)])
-        
-    def forward(self, inputs, init_states=None):
 
+        elif ln_type == "none":
+            # print("DON'T add LayerNorm")
+            self.linear_w = nn.ModuleList(
+                [nn.Linear(self.input_dim, self.hidden_dim) for _ in range(4)]
+            )
+            self.linear_u = nn.ModuleList(
+                [nn.Linear(self.hidden_dim, self.hidden_dim) for _ in range(4)]
+            )
+
+    def forward(self, inputs, init_states=None):
         if self.batch_first:
             # sequence first (timesteps, batch_size, input_dims)
             inputs = inputs.transpose(0, 1)
@@ -76,15 +103,17 @@ class LayerNormLSTM(nn.Module):
 
         return outputs, (h_prev, c_prev)
 
+
 class BaseRnn(nn.Module):
     """LSTM-based network for experiments with Synthetic Normal data and Human Activity."""
+
     def __init__(
-            self,
-            input_size: int,
-            hidden_dim: int,
-            n_layers: int,
-            drop_prob: float,
-            layer_norm: bool,
+        self,
+        input_size: int,
+        hidden_dim: int,
+        n_layers: int,
+        drop_prob: float,
+        layer_norm: bool,
     ) -> None:
         """Initialize model's parameters.
 
@@ -101,9 +130,13 @@ class BaseRnn(nn.Module):
         self.hidden_dim = hidden_dim
 
         if layer_norm:
-            self.lstm = LayerNormLSTM(input_size, hidden_dim, batch_first=True, ln_type="after")
+            self.lstm = LayerNormLSTM(
+                input_size, hidden_dim, batch_first=True, ln_type="after"
+            )
         else:
-            self.lstm = nn.LSTM(input_size, hidden_dim, n_layers, dropout=drop_prob, batch_first=True)
+            self.lstm = nn.LSTM(
+                input_size, hidden_dim, n_layers, dropout=drop_prob, batch_first=True
+            )
 
         self.linear = nn.Linear(hidden_dim, 1)
         self.activation = nn.Sigmoid()
@@ -122,17 +155,19 @@ class BaseRnn(nn.Module):
         out = out.view(batch_size, -1)
         return out
 
+
 class MnistRNN(nn.Module):
     """Recurrent network for MNIST experiments."""
+
     def __init__(
-            self,
-            input_size: int,
-            hidden_rnn: int,
-            rnn_n_layers: int,
-            linear_dims: List[int],
-            rnn_dropout: float = 0.0,
-            dropout: float = 0.5,
-            rnn_type: str = "LSTM",
+        self,
+        input_size: int,
+        hidden_rnn: int,
+        rnn_n_layers: int,
+        linear_dims: List[int],
+        rnn_dropout: float = 0.0,
+        dropout: float = 0.5,
+        rnn_type: str = "LSTM",
     ) -> None:
         """Initialize model's parameters.
 
@@ -211,55 +246,57 @@ class MnistRNN(nn.Module):
         out = self.sigmoid(out)
         out = out.reshape(batch_size, seq_len, 1)
         return out
-    
+
+
 class CombinedVideoRNN(nn.Module):
-        """LSTM-based network for experiments with videos."""
-        def __init__(
-            self,
-            input_dim: int,
-            rnn_hidden_dim: int,
-            num_layers: int,
-            rnn_dropout: float,
-            dropout: float,
-            layer_norm: bool
-            ) -> None:
-            """ Initialize combined LSTM model for video datasets.
+    """LSTM-based network for experiments with videos."""
 
-            :param input_dim: dimension of the input data (after feature extraction)
-            :param rnn_hidden_dim: hidden dimension for LSTM block
-            :param rnn_dropuot: dropout probability in LSTM block
-            :param dropout: dropout probability in Dropout layer
-            """
-            super(CombinedVideoRNN, self).__init__()
-            if layer_norm:
-                self.rnn = LayerNormLSTM(
-                    input_size=input_dim,
-                    hidden_size=rnn_hidden_dim, 
-                    batch_first=True, 
-                    ln_type="after"
+    def __init__(
+        self,
+        input_dim: int,
+        rnn_hidden_dim: int,
+        num_layers: int,
+        rnn_dropout: float,
+        dropout: float,
+        layer_norm: bool,
+    ) -> None:
+        """Initialize combined LSTM model for video datasets.
+
+        :param input_dim: dimension of the input data (after feature extraction)
+        :param rnn_hidden_dim: hidden dimension for LSTM block
+        :param rnn_dropuot: dropout probability in LSTM block
+        :param dropout: dropout probability in Dropout layer
+        """
+        super(CombinedVideoRNN, self).__init__()
+        if layer_norm:
+            self.rnn = LayerNormLSTM(
+                input_size=input_dim,
+                hidden_size=rnn_hidden_dim,
+                batch_first=True,
+                ln_type="after",
             )
-            
-            else:
-                self.rnn = nn.LSTM(
-                    input_size=input_dim,
-                    hidden_size=rnn_hidden_dim, 
-                    num_layers=num_layers,
-                    batch_first=True, 
-                    dropout=rnn_dropout
-                )
 
-            self.fc = nn.Linear(rnn_hidden_dim, 1)
-            self.dropout = nn.Dropout(dropout)
-            self.relu = nn.ReLU()  
-            self.activation = nn.Sigmoid()        
+        else:
+            self.rnn = nn.LSTM(
+                input_size=input_dim,
+                hidden_size=rnn_hidden_dim,
+                num_layers=num_layers,
+                batch_first=True,
+                dropout=rnn_dropout,
+            )
 
-        def forward(self, x: torch.Tensor) -> torch.Tensor:
-            """Forward pass through the model.
+        self.fc = nn.Linear(rnn_hidden_dim, 1)
+        self.dropout = nn.Dropout(dropout)
+        self.relu = nn.ReLU()
+        self.activation = nn.Sigmoid()
 
-            :param x: input torch tensor
-            :return: out of the model
-            """
-            r_out, _ = self.rnn(x)
-            r_out = self.dropout(self.fc(r_out))
-            out = torch.sigmoid(r_out)
-            return out
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass through the model.
+
+        :param x: input torch tensor
+        :return: out of the model
+        """
+        r_out, _ = self.rnn(x)
+        r_out = self.dropout(self.fc(r_out))
+        out = torch.sigmoid(r_out)
+        return out

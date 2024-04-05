@@ -1,14 +1,13 @@
 """Module with utility functions for models initialization."""
-from typing import Dict, Optional, Sequence, Tuple, Union, List
-import torch
-from torch.utils.data import Dataset
-import yaml
+
+from typing import List
+
 import pytorch_lightning as pl
 import ruptures as rpt
+from torch.utils.data import Dataset
 
-from . import core_models, cpd_models
-from . import klcpd, tscp
-from .cpd_models import fix_seeds
+from . import core_models, cpd_models, klcpd, tscp
+
 
 def get_models_list(
     args: dict,
@@ -40,31 +39,35 @@ def get_models_list(
 
     return models_list
 
+
 def get_seq2seq_models_list(
-    args: dict,
-    train_dataset: Dataset,
-    test_dataset: Dataset
+    args: dict, train_dataset: Dataset, test_dataset: Dataset
 ) -> List[cpd_models.CPDModel]:
     """Initialize seq2seq models for a particular experiment.
 
     :param args: dict with all the parameters
     :param train_dataset: training data
     :param test_dataset: testing data
-    :returns: list with 2 CPD models in case of 'combined loss', 
+    :returns: list with 2 CPD models in case of 'combined loss',
               list with 1 CPD model in case of 'indid' or 'bce' loss
     """
     # Initialize core models for synthetic_1D, _100D and human_activity experiments
-    if args["experiments_name"] in ["synthetic_1D", "synthetic_100D", "human_activity", "yahoo"]:
+    if args["experiments_name"] in [
+        "synthetic_1D",
+        "synthetic_100D",
+        "human_activity",
+        "yahoo",
+    ]:
         # initialize default base model for Synthetic Normal 1D experiment
         core_model = core_models.BaseRnn(
             input_size=args["model"]["input_size"],
             hidden_dim=args["model"]["hidden_dim"],
             n_layers=args["model"]["n_layers"],
             drop_prob=args["model"]["drop_prob"],
-            layer_norm=args["model"]["layer_norm"]
+            layer_norm=args["model"]["layer_norm"],
         )
-            
-    elif args["experiments_name"] == "mnist":        
+
+    elif args["experiments_name"] == "mnist":
         # initialize default base model for MNIST experiment
         core_model = core_models.MnistRNN(
             input_size=args["model"]["input_size"],
@@ -73,9 +76,9 @@ def get_seq2seq_models_list(
             linear_dims=args["model"]["linear_dims"],
             rnn_dropout=args["model"]["rnn_dropout"],
             dropout=args["model"]["dropout"],
-            rnn_type=args["model"]["rnn_type"]
+            rnn_type=args["model"]["rnn_type"],
         )
-    
+
     elif args["experiments_name"] in ["explosion", "road_accidents"]:
         core_model = core_models.CombinedVideoRNN(
             input_dim=args["model"]["input_size"],
@@ -83,7 +86,7 @@ def get_seq2seq_models_list(
             num_layers=args["model"]["rnn_n_layers"],
             rnn_dropout=args["model"]["rnn_dropout"],
             dropout=args["model"]["dropout"],
-            layer_norm=args["model"]["layer_norm"]
+            layer_norm=args["model"]["layer_norm"],
         )
     else:
         raise ValueError("Wrong experiment name.")
@@ -91,12 +94,12 @@ def get_seq2seq_models_list(
     # Initialize CPD models
     if args["loss_type"] in ["indid", "bce"]:
         model = cpd_models.CPDModel(
-            loss_type = args["loss_type"],
+            loss_type=args["loss_type"],
             args=args,
             model=core_model,
             train_dataset=train_dataset,
             test_dataset=test_dataset,
-            )
+        )
         models_list = [model]
 
     elif args["loss_type"] == "combined":
@@ -106,23 +109,22 @@ def get_seq2seq_models_list(
             model=core_model,
             train_dataset=train_dataset,
             test_dataset=test_dataset,
-            )
+        )
         model_2 = cpd_models.CPDModel(
             loss_type="indid",
             args=args,
             model=core_model,
             train_dataset=train_dataset,
             test_dataset=test_dataset,
-            )
+        )
         models_list = [model_1, model_2]
     else:
         raise ValueError("Wrong loss type. Choose 'indid', 'bce' or 'combined'.'")
     return models_list
 
+
 def get_kl_cpd_models_list(
-    args: dict,
-    train_dataset: Dataset,
-    test_dataset: Dataset
+    args: dict, train_dataset: Dataset, test_dataset: Dataset
 ) -> List[klcpd.KLCPD]:
     """Initialize KL-CPD models for a particular experiment.
 
@@ -136,28 +138,31 @@ def get_kl_cpd_models_list(
         netD = klcpd.VideoNetD(args)
         netG = klcpd.VideoNetG(args)
 
-    elif args["experiments_name"] in ["synthetic_1D", "synthetic_100D", "mnist", "human_activity"]:
+    elif args["experiments_name"] in [
+        "synthetic_1D",
+        "synthetic_100D",
+        "mnist",
+        "human_activity",
+    ]:
         netD = klcpd.NetD(args)
         netG = klcpd.NetG(args)
     else:
         raise ValueError("Wrong experiments name.")
-    
+
     model = klcpd.KLCPD(
         args=args,
         net_generator=netG,
         net_discriminator=netD,
         train_dataset=train_dataset,
-        test_dataset=test_dataset
-        )
+        test_dataset=test_dataset,
+    )
     models_list = [model]
     return models_list
 
 
 def get_tscp_models_list(
-    args: dict,
-    train_dataset: Dataset,
-    test_dataset: Dataset
-    )->  List[tscp.TSCP_model]:
+    args: dict, train_dataset: Dataset, test_dataset: Dataset
+) -> List[tscp.TSCP_model]:
     """Initialize TS-CP2 models for a particular experiment.
 
     :param args: dict with all the parameters
@@ -167,43 +172,49 @@ def get_tscp_models_list(
     """
     # universal encoder for all the experiments
     encoder = tscp.BaseTSCPEncoder(args)
-        
+
     model = tscp.TSCP_model(
-        args=args,
-        model=encoder,
-        train_dataset=train_dataset, 
-        test_dataset=test_dataset
+        args=args, model=encoder, train_dataset=train_dataset, test_dataset=test_dataset
     )
 
     models_list = [model]
     return models_list
 
+
 def get_classic_models_list(args: dict) -> List[cpd_models.ClassicBaseline]:
-    """ Initialize classic baseline models.
+    """Initialize classic baseline models.
 
     :param args: dict with all the parameters
     :return: ClassicBaseline model
     """
-    
-    if (args["n_pred"] is None and args["pen"] is None) \
-            or (args["n_pred"] is not None and args["pen"] is not None):
-            
-            raise ValueError("You should specify either 'n_pred' or 'pen' parameter for a ClassicBaseline model.")
+
+    if (args["n_pred"] is None and args["pen"] is None) or (
+        args["n_pred"] is not None and args["pen"] is not None
+    ):
+        raise ValueError(
+            "You should specify either 'n_pred' or 'pen' parameter for a ClassicBaseline model."
+        )
 
     if args["model_type"] == "classic_binseg":
-        model = cpd_models.ClassicBaseline(rpt.Binseg(model=args["core_model"]), n_pred=args["n_pred"], pen=args["pen"])
-    
+        model = cpd_models.ClassicBaseline(
+            rpt.Binseg(model=args["core_model"]), n_pred=args["n_pred"], pen=args["pen"]
+        )
+
     elif args["model_type"] == "classic_pelt":
-        model = cpd_models.ClassicBaseline(rpt.Pelt(model=args["core_model"]), n_pred=arg["n_pred"], pen=args["pen"])
-    
-    elif args["model_type"] == "classic_kernel":        
-        model = cpd_models.ClassicBaseline(rpt.KernelCPD(kernel=args["kernel"]), n_pred=args["n_pred"], pen=args["pen"])
+        model = cpd_models.ClassicBaseline(
+            rpt.Pelt(model=args["core_model"]), n_pred=args["n_pred"], pen=args["pen"]
+        )
+
+    elif args["model_type"] == "classic_kernel":
+        model = cpd_models.ClassicBaseline(
+            rpt.KernelCPD(kernel=args["kernel"]), n_pred=args["n_pred"], pen=args["pen"]
+        )
 
     else:
         raise ValueError(f'Wrong classic baseline type: {args["model_type"]}.')
-    
+
     # for consistency with the general interface
     model = None
     models_list = [model]
-    
+
     return models_list

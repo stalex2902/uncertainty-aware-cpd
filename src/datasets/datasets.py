@@ -1,26 +1,19 @@
 """Module for experiments' dataset methods."""
-from .cpd_models import fix_seeds
 
 import collections
-
-collections.Iterable = collections.abc.Iterable  # HOT FIX
-from collections import defaultdict
-
-from typing import Dict, List, Optional, Tuple, Union
-
 import os
 import pickle
 import random
-import glob
+from collections import defaultdict
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple, Union
 
 import av
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-
 from pims import ImageSequence
-from pathlib import Path
 from pytorchvideo.transforms import (
     ShortSideScale,
 )
@@ -33,6 +26,10 @@ from torchvision.transforms._transforms_video import (
     NormalizeVideo,
 )
 from tqdm import tqdm
+
+from .cpd_models import fix_seeds
+
+collections.Iterable = collections.abc.Iterable  # HOT FIX
 
 
 class CPDDatasets:
@@ -1047,19 +1044,18 @@ class YAHOODataset(Dataset):
 # ------------------------------------------------------------------------------------------------------------#
 
 
-class ModelOutputDataset(Dataset):
-    """Fake dataset to store pre-computed model outputs for CUSUM model evaluation."""
+class OutputDataset(Dataset):
+    """Fake dataset to store pre-computed all models' outputs for MMD model evaluation."""
 
     def __init__(self, test_out_bank, test_uncertainties_bank, test_labels_bank):
         super().__init__()
 
+        # every prediction is (batch_size, seq_len)
         self.test_out = list(torch.vstack(test_out_bank))
 
-        self.test_out = list(torch.cat(test_out_bank, dim=-2))
-        # mean_preds - (batch_size, seq_len); all models preds - (n_models, batch_size, seq_len)
+        self.test_labels = list(torch.vstack(test_labels_bank))
 
         self.test_uncertainties = list(torch.vstack(test_uncertainties_bank))
-        self.test_labels = list(torch.vstack(test_labels_bank))
 
     def __len__(self):
         return len(self.test_labels)
@@ -1074,12 +1070,10 @@ class AllModelsOutputDataset(Dataset):
     def __init__(self, test_out_bank, test_labels_bank):
         super().__init__()
 
-        self.test_out = list(
-            torch.cat(test_out_bank[:-1], dim=1).transpose(0, 1)
-        )  # drop last batch
         # every prediction is (n_models, batch_size, seq_len)
-        self.test_labels = list(torch.vstack(test_labels_bank[:-1]))
-        # self.test_uncertainties = [None for _ in self.test_labels]
+        self.test_out = list(torch.hstack(test_out_bank).transpose(0, 1))
+
+        self.test_labels = list(torch.vstack(test_labels_bank))
 
     def __len__(self):
         return len(self.test_labels)

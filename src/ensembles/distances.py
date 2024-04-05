@@ -1,6 +1,6 @@
 import torch
+from scipy.stats import wasserstein_distance, wasserstein_distance_nd
 
-from scipy.stats import wasserstein_distance
 
 def MMD_batch(x, y, kernel, bandwidth_range=None):
     """Emprical maximum mean discrepancy. The lower the result
@@ -53,67 +53,109 @@ def MMD_batch(x, y, kernel, bandwidth_range=None):
 
     return (XX + YY - 2.0 * XY).view(bs, -1).mean(1)
 
-def wasserstein_distance_batch(a, b):
+
+def wasserstein_distance_1d_batch(a, b):
     # a, b: (batch_size, window_size, num_models)
-    
-    batch_size, window_size, num_models = a.shape
-    
+
+    batch_size = a.shape[0]
+
     dist_batch = []
-    
+
     for i in range(batch_size):
-        sample_1 = a[i].flatten() # (window_size * num_models)
+        sample_1 = a[i].flatten()  # (window_size * num_models)
         sample_2 = b[i].flatten()
-        
+
         curr_dist = wasserstein_distance(sample_1, sample_2)
-        
+
         dist_batch.append(curr_dist)
-        
+
+    return torch.Tensor(dist_batch)
+
+
+def wasserstein_distance_nd_batch(a, b):
+    # a, b: (batch_size, window_size, num_models)
+
+    batch_size = a.shape[0]
+
+    dist_batch = []
+
+    for i in range(batch_size):
+        sample_1 = a[i]  # (window_size, num_models) == (n_samples, dim_size)
+        sample_2 = b[i]
+
+        curr_dist = wasserstein_distance_nd(sample_1, sample_2)
+
+        dist_batch.append(curr_dist)
+
     return torch.Tensor(dist_batch)
 
 
 def anchor_window_detector_batch(
-    ensemble_preds, window_size, distance="mmd", kernel="rbf", anchor_window_type="start", bandwidth_range=None
+    ensemble_preds,
+    window_size,
+    distance="mmd",
+    kernel="rbf",
+    anchor_window_type="start",
+    bandwidth_range=None,
 ) -> torch.Tensor:
-    #ensemble_preds - output of .predict_all_model(), shape is (n_models, batch_size, seq_len)
-    
-    assert distance in ["mmd", "cosine", "wasserstein"], "Unknown distance type"
+    # ensemble_preds - output of .predict_all_model(), shape is (n_models, batch_size, seq_len)
+
+    assert distance in [
+        "mmd",
+        "cosine",
+        "wasserstein_1d",
+        "wasserstein_nd",
+    ], "Unknown distance type"
     assert anchor_window_type in ["start", "prev", "combined"], "Unknown window type"
-    
+
     _, batch_size, seq_len = ensemble_preds.shape
 
     future_idx_range = torch.arange(seq_len)[window_size:]
 
     # first window_size elements are zeros
     dist_scores_batch = torch.zeros((batch_size, seq_len))
-        
+
     for future_idx in future_idx_range:
         if anchor_window_type == "start":
             anchor_wnd = ensemble_preds[:, :, :window_size]
+
         elif anchor_window_type == "prev":
-            
             anchor_window_start = max(0, future_idx - 2 * window_size)
-            anchor_window_end = anchor_window_start + window_size 
-             
-            anchor_wnd = ensemble_preds[:, :, anchor_window_start : anchor_window_end]
+            anchor_window_end = anchor_window_start + window_size
+
+            anchor_wnd = ensemble_preds[:, :, anchor_window_start:anchor_window_end]
+
+        # TODO: check 'combined' mode
         else:
-            half_wnd_size = window_size // 2 
+            half_wnd_size = window_size // 2
             anchor_wnd = torch.cat(
-                (ensemble_preds[:, :, :half_wnd_size], ensemble_preds[:, :, future_idx - 2 * half_wnd_size : future_idx - half_wnd_size]),
-                dim=-1
+                (
+                    ensemble_preds[:, :, :half_wnd_size],
+                    ensemble_preds[
+                        :,
+                        :,
+                        future_idx - 2 * half_wnd_size : future_idx - half_wnd_size,
+                    ],
+                ),
+                dim=-1,
             )
-            
+
             window_size = half_wnd_size * 2
-            
+
         anchor_wnd = anchor_wnd.permute(1, 2, 0)
-        future_wnd = ensemble_preds[:, :, future_idx - window_size : future_idx].permute(1, 2, 0) #.transpose(0, 1).reshape(batch_size, -1, 1)
-        
+        future_wnd = ensemble_preds[
+            :, :, future_idx - window_size : future_idx
+        ].permute(1, 2, 0)  # .transpose(0, 1).reshape(batch_size, -1, 1)
+
         if distance == "mmd":
-            dist_batch = MMD_batch(anchor_wnd, future_wnd, kernel=kernel, bandwidth_range=bandwidth_range)
-        elif distance == "wasserstein":
-            dist_batch = wasserstein_distance_batch(anchor_wnd, future_wnd)
+            dist_batch = MMD_batch(
+                anchor_wnd, future_wnd, kernel=kernel, bandwidth_range=bandwidth_range
+            )
+        elif distance == "wasserstein_1d":
+            dist_batch = wasserstein_distance_1d_batch(anchor_wnd, future_wnd)
         else:
-            raise NotImplementedError("Only MMD distance is currently implemented")
-                    
+            dist_batch = wasserstein_distance_nd_batch(anchor_wnd, future_wnd)
+
         dist_scores_batch[:, future_idx] = dist_batch
 
     return dist_scores_batch

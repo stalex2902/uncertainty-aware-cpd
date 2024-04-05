@@ -17,6 +17,7 @@ from pims import ImageSequence
 from pytorchvideo.transforms import (
     ShortSideScale,
 )
+from src.utils import fix_seeds
 from torch.distributions.multivariate_normal import MultivariateNormal
 from torch.utils.data import Dataset, Subset
 from torchvision.datasets.video_utils import VideoClips
@@ -26,8 +27,6 @@ from torchvision.transforms._transforms_video import (
     NormalizeVideo,
 )
 from tqdm import tqdm
-
-from .cpd_models import fix_seeds
 
 collections.Iterable = collections.abc.Iterable  # HOT FIX
 

@@ -2,14 +2,14 @@ import os
 from abc import ABC
 from typing import Optional, Tuple, Union
 
-import distances
 import pytorch_lightning as pl
 import torch
-from baselines import klcpd, tscp
-from datasets import datasets
-from models import model_utils
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.loggers import TensorBoardLogger
+from src.baselines import klcpd, tscp
+from src.datasets import datasets
+from src.ensembles import distances
+from src.models import model_utils
 from torch.utils.data import Subset
 from utils.fix_seeds import fix_seeds
 

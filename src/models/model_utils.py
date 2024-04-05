@@ -4,9 +4,9 @@ from typing import List
 
 import pytorch_lightning as pl
 import ruptures as rpt
+from baselines import klcpd, tscp
+from models import core_models, cpd_models
 from torch.utils.data import Dataset
-
-from . import core_models, cpd_models, klcpd, tscp
 
 
 def get_models_list(

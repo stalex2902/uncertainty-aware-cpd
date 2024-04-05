@@ -6,11 +6,11 @@ from typing import Dict, List, Tuple
 import numpy as np
 import torch
 import torch.nn as nn
+from baselines import klcpd, tscp
+from models.cpd_models import ClassicBaseline
 from scipy.stats import ttest_ind
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from utils import klcpd, tscp
-from utils.cpd_models import ClassicBaseline
 
 # ------------------------------------------------------------------------------------------------------------#
 #                                         Calculate CPD metrics                                               #

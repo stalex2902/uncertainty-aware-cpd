@@ -3,12 +3,12 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import pytorch_lightning as pl
-from ensembles.ensembles import (
+from src.ensembles.ensembles import (
     # CusumBayesCPDModel,
     CusumEnsembleCPDModel,
     DistanceEnsembleCPDModel,
 )
-from metrics.metrics_utils import (
+from src.metrics.metrics_utils import (
     F1_score,
     area_under_graph,
     collect_model_predictions_on_set,

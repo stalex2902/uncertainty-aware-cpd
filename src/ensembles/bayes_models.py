@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchbnn as bnn
-from loss import loss
+from src.loss import loss
 from torch.utils.data import DataLoader, Dataset
 
 EPS = 1e-9

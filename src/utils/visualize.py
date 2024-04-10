@@ -2,7 +2,7 @@ from typing import Any
 
 import matplotlib.pyplot as plt
 import torch
-from baselines.tscp import get_tscp_output, post_process_tscp_output
+from src.baselines.tscp import get_tscp_output, post_process_tscp_output
 
 
 def visualize_predictions(

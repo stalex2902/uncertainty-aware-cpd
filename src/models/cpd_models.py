@@ -4,9 +4,9 @@ import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-from datasets import datasets
-from loss import loss
 from sklearn.base import BaseEstimator
+from src.datasets import datasets
+from src.loss import loss
 from torch.utils.data import DataLoader, Dataset
 
 

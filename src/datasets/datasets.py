@@ -17,7 +17,7 @@ from pims import ImageSequence
 from pytorchvideo.transforms import (
     ShortSideScale,
 )
-from src.utils import fix_seeds
+from src.utils.fix_seeds import fix_seeds
 from torch.distributions.multivariate_normal import MultivariateNormal
 from torch.utils.data import Dataset, Subset
 from torchvision.datasets.video_utils import VideoClips

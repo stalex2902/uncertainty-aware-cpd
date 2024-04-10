@@ -10,8 +10,8 @@ from src.baselines import klcpd, tscp
 from src.datasets import datasets
 from src.ensembles import distances
 from src.models import model_utils
+from src.utils.fix_seeds import fix_seeds
 from torch.utils.data import Subset
-from utils.fix_seeds import fix_seeds
 
 EPS = 1e-6
 

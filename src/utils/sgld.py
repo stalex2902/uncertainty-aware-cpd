@@ -3,7 +3,7 @@ import warnings
 
 import torch
 import torch.nn as nn
-from models.cpd_models import CPDModel
+from src.models.cpd_models import CPDModel
 from torch.optim import Adam
 from torch.optim.lr_scheduler import _LRScheduler
 from torch.utils.data import Dataset

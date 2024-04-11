@@ -312,6 +312,6 @@ class CombinedVideoRNN(nn.Module):
         out = self.dropout(self.fc(r_out)) / self.temperature
 
         if not self.return_logits:
-            out = torch.sigmoid(r_out)
+            out = torch.sigmoid(out)
 
         return out

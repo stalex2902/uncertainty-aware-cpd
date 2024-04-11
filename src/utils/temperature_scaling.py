@@ -5,6 +5,7 @@
 import torch
 from torch import nn, optim
 from torch.nn import functional as F
+from tqdm import tqdm
 
 
 class ModelWithTemperature(nn.Module):
@@ -16,16 +17,19 @@ class ModelWithTemperature(nn.Module):
             NOT the softmax (or log softmax)!
     """
 
-    def __init__(self, model, preproceesor=None, verbose=True):
+    def __init__(self, model, preprocessor=None, lr=1e-2, max_iter=50, verbose=True):
         super(ModelWithTemperature, self).__init__()
         self.model = model
         self.temperature = nn.Parameter(torch.ones(1) * 1.5)
         self.verbose = verbose
-        self.preproceesor = preproceesor
+        self.preprocessor = preprocessor
+        self.lr = lr
+        self.max_iter = max_iter
 
     def get_logits(self, input):
-        if self.preproceesor:
-            input = self.preproceesor(input)
+        if self.preprocessor:
+            input = self.preprocessor(input.float())
+            input = input.transpose(1, 2).flatten(2)
         logits = self.model(input)
         return logits
 
@@ -58,7 +62,7 @@ class ModelWithTemperature(nn.Module):
         logits_list = []
         labels_list = []
         with torch.no_grad():
-            for input, label in valid_loader:
+            for input, label in tqdm(valid_loader, disable=not self.verbose):
                 input = input.cuda()
                 _logits = self.get_logits(input)
 
@@ -81,6 +85,7 @@ class ModelWithTemperature(nn.Module):
         # Calculate NLL and ECE before temperature scaling
         before_temperature_nll = nll_criterion(logits, labels).item()
         before_temperature_ece = ece_criterion(logits, labels).item()
+
         if self.verbose:
             print(
                 "Before temperature - NLL: %.3f, ECE: %.3f"
@@ -89,7 +94,7 @@ class ModelWithTemperature(nn.Module):
 
         # Next: optimize the temperature w.r.t. NLL
         optimizer = optim.LBFGS(
-            [self.temperature], lr=0.01, max_iter=50
+            [self.temperature], lr=self.lr, max_iter=self.max_iter
         )  # QQQ: parameters??
 
         def eval():

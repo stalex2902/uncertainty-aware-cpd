@@ -526,7 +526,7 @@ def collect_model_predictions_on_set(
 
         # collect model's predictions once and reuse them
         # for test_inputs, test_labels in tqdm(test_loader):
-        for test_inputs, test_labels in tqdm(test_loader):
+        for test_inputs, test_labels in tqdm(test_loader, disable=not verbose):
             test_out, test_uncertainties, test_labels = get_models_predictions(
                 test_inputs,
                 test_labels,

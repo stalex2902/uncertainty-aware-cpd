@@ -565,16 +565,6 @@ def all_cusums_evaluation_pipeline(
                     f"Evaluating CUSUM model with cusum_mode = {cusum_mode} and conditional = {conditional}"
                 )
 
-            # min_th, max_th = estimate_threshold_range(
-            #     model=ens_model,
-            #     test_batch=test_batch,
-            #     quant_min=min_th_quant,
-            #     quant_max=max_th_quant,
-            #     device=device,
-            # )
-
-            # cusum_threshold_list = np.linspace(min_th, max_th, threshold_number)
-
             res_dict = evaluate_cusum_ensemble_model(
                 cusum_threshold_number=threshold_number,
                 output_dataloader=out_dataloader,

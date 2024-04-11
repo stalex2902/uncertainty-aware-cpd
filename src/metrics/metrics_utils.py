@@ -1026,7 +1026,7 @@ def check_stds_equality(
 
 
 def estimate_threshold_range(
-    model, out_series_batch, out_series_std_batch, quant_min=0.1, quant_max=0.9
+    model, out_series_batch, out_series_std_batch, quant_min, quant_max
 ) -> Tuple[float, float]:
     _, scores = model.fake_predict(out_series_batch, out_series_std_batch)
 

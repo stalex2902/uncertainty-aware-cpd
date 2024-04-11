@@ -114,6 +114,8 @@ class BaseRnn(nn.Module):
         n_layers: int,
         drop_prob: float,
         layer_norm: bool,
+        temperature: float = 1.0,
+        return_logits: bool = False,
     ) -> None:
         """Initialize model's parameters.
 
@@ -140,6 +142,8 @@ class BaseRnn(nn.Module):
 
         self.linear = nn.Linear(hidden_dim, 1)
         self.activation = nn.Sigmoid()
+        self.temperature = temperature
+        self.return_logits = return_logits
 
     def forward(self, input_seq: torch.Tensor) -> torch.Tensor:
         """Forward propagation through model.
@@ -148,10 +152,13 @@ class BaseRnn(nn.Module):
         :return: probabilities of changes for each sequence
         """
         batch_size = input_seq.size(0)
-        lstm_out, hidden = self.lstm(input_seq.float())
+        lstm_out, _ = self.lstm(input_seq.float())
         lstm_out = lstm_out.contiguous().view(-1, self.hidden_dim)
-        out = self.linear(lstm_out)
-        out = self.activation(out)
+        out = self.linear(lstm_out) / self.temperature
+
+        if not self.return_logits:
+            out = self.activation(out / self.temperature)
+
         out = out.view(batch_size, -1)
         return out
 
@@ -259,6 +266,8 @@ class CombinedVideoRNN(nn.Module):
         rnn_dropout: float,
         dropout: float,
         layer_norm: bool,
+        temperature: float = 1.0,
+        return_logits: bool = False,
     ) -> None:
         """Initialize combined LSTM model for video datasets.
 
@@ -290,6 +299,9 @@ class CombinedVideoRNN(nn.Module):
         self.relu = nn.ReLU()
         self.activation = nn.Sigmoid()
 
+        self.temperature = temperature
+        self.return_logits = return_logits
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass through the model.
 
@@ -297,6 +309,9 @@ class CombinedVideoRNN(nn.Module):
         :return: out of the model
         """
         r_out, _ = self.rnn(x)
-        r_out = self.dropout(self.fc(r_out))
-        out = torch.sigmoid(r_out)
+        out = self.dropout(self.fc(r_out)) / self.temperature
+
+        if not self.return_logits:
+            out = torch.sigmoid(r_out)
+
         return out

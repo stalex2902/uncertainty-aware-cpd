@@ -489,11 +489,11 @@ def get_models_predictions(
         outs, uncertainties = inputs[0], inputs[1]
 
     elif model_type == "fake_cusum":
-        outs = model.fake_predict(inputs[0], inputs[1])
+        outs, _ = model.fake_predict(inputs[0], inputs[1])
         uncertainties = None
 
     elif model_type == "fake_mmd":
-        outs = model.fake_predict(inputs)
+        outs, _ = model.fake_predict(inputs)
         uncertainties = None
 
     else:
@@ -943,14 +943,14 @@ def evaluate_rej_rates_for_dataloader(
 
 
 # ------------------------------------------------------------------------------------------------------------#
-#                                Check std for Ensenble / Bayes models                                       #
+#                                Check std for Ensenble / Bayes models                                        #
 # ------------------------------------------------------------------------------------------------------------#
 
 
 def compute_stds(
     model,
     test_dataloader: DataLoader,
-    windows_list: List[int],
+    half_windows_list: List[int],
     scale: int = None,
     step: int = 1,
     alpha: float = 1.0,
@@ -972,9 +972,9 @@ def compute_stds(
         preds_std_bank.append(preds_std.detach().cpu())
 
     res_dict = {}
-    for window in windows_list:
+    for half_window in half_windows_list:
         if verbose:
-            print(f"Window: {window}")
+            print(f"Half-window: {half_window}")
         normal_stds_list = []
         cp_stds_list = []
         for _, labels, preds_std in zip(batch_bank, labels_bank, preds_std_bank):
@@ -982,19 +982,19 @@ def compute_stds(
             for cp_idx, std_series in zip(cp_idxs_batch, preds_std):
                 if cp_idx == 0:
                     normal_stds_list.append(std_series.mean().item())
-                elif cp_idx < window + 1:
-                    cp_slice = std_series[: cp_idx + window]
+                elif cp_idx < half_window + 1:
+                    cp_slice = std_series[: cp_idx + half_window]
                     cp_stds_list.append(cp_slice.mean().item())
                 else:
-                    cp_slice = std_series[cp_idx - window : cp_idx + window]
-                    normal_slice = std_series[: cp_idx - window]
+                    cp_slice = std_series[cp_idx - half_window : cp_idx + half_window]
+                    normal_slice = std_series[: cp_idx - half_window]
                     cp_stds_list.append(cp_slice.mean().item())
                     normal_stds_list.append(normal_slice.mean().item())
         if verbose:
             check_stds_equality(normal_stds_list, cp_stds_list)
             print("-" * 50)
 
-        res_dict[window] = (normal_stds_list, cp_stds_list)
+        res_dict[half_window] = (normal_stds_list, cp_stds_list)
     return res_dict
 
 
@@ -1018,3 +1018,19 @@ def check_stds_equality(
         print("Stds are not statistically equal")
     else:
         print("No conclusion")
+
+
+# ------------------------------------------------------------------------------------------------------------#
+#                                          Evaluate threshold range                                           #
+# ------------------------------------------------------------------------------------------------------------#
+
+
+def estimate_threshold_range(
+    model, out_series_batch, out_series_std_batch, quant_min=0.1, quant_max=0.9
+) -> Tuple[float, float]:
+    _, scores = model.fake_predict(out_series_batch, out_series_std_batch)
+
+    min_th = torch.quantile(scores, quant_min).item()
+    max_th = torch.quantile(scores, quant_max).item()
+
+    return min_th, max_th

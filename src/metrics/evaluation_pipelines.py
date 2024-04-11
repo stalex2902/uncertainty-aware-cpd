@@ -3,15 +3,18 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import pytorch_lightning as pl
+from src.datasets.datasets import OutputDataset
 from src.ensembles.ensembles import (
-    # CusumBayesCPDModel,
     CusumEnsembleCPDModel,
     DistanceEnsembleCPDModel,
+    # CusumBayesCPDModel,
+    EnsembleCPDModel,
 )
 from src.metrics.metrics_utils import (
     F1_score,
     area_under_graph,
     collect_model_predictions_on_set,
+    estimate_threshold_range,
     evaluate_metrics_on_set,
     write_metrics_to_file,
 )
@@ -247,12 +250,12 @@ def evaluation_pipeline(
 
 
 def evaluate_cusum_ensemble_model(
-    cusum_threshold_list: List[float],
+    cusum_threshold_number: List[float],
     output_dataloader: DataLoader,
     margin_list: List[int],
     args_config: Dict,
     n_models: int,
-    save_path: str,
+    # save_path: str,
     cusum_mode: str,
     conditional: bool = False,
     global_sigma: float = None,
@@ -263,10 +266,44 @@ def evaluate_cusum_ensemble_model(
     device: str = "cpu",
     verbose: bool = True,
     write_metrics_filename: str = None,
+    min_th_quant: float = 0.1,
+    max_th_quant: float = 0.9,
 ):
     res_dict = {}
     best_th = None
     best_f1_global = 0
+
+    # # TODO: repeatition!!!
+    test_cusum_model = CusumEnsembleCPDModel(
+        args=args_config,
+        n_models=n_models,
+        global_sigma=global_sigma,
+        boot_sample_size=None,
+        train_anomaly_num=None,
+        cusum_threshold=0.0,
+        cusum_mode=cusum_mode,
+        conditional=conditional,
+        lambda_null=lambda_null,
+        lambda_inf=lambda_inf,
+        half_wnd=half_wnd,
+        var_coeff=var_coeff,
+    )
+
+    (out_series_batch, out_series_std_batch), _ = next(iter(output_dataloader))
+
+    min_th, max_th = estimate_threshold_range(
+        model=test_cusum_model,
+        out_series_batch=out_series_batch,
+        out_series_std_batch=out_series_std_batch,
+        quant_min=min_th_quant,
+        quant_max=max_th_quant,
+    )
+
+    print(f"Threshold range: ({min_th}, {max_th})")
+
+    cusum_threshold_list = np.linspace(min_th, max_th, cusum_threshold_number)
+
+    # cusum_threshold_list = np.linspace(0, 100, cusum_threshold_number)
 
     for cusum_th in tqdm(cusum_threshold_list):
         cusum_model = CusumEnsembleCPDModel(
@@ -281,7 +318,8 @@ def evaluate_cusum_ensemble_model(
             half_wnd=half_wnd,
             var_coeff=var_coeff,
         )
-        cusum_model.load_models_list(save_path)
+        # no need to load state dicts because we use pre-computed outputs
+        # cusum_model.load_models_list(save_path)
 
         metrics_local, (max_th_f1_margins_dict, max_f1_margins_dict), _, _ = (
             evaluation_pipeline(
@@ -478,6 +516,89 @@ def evaluate_cusum_bayes_model(
             )
     return res_dict
 """
+
+
+def all_cusums_evaluation_pipeline(
+    threshold_number: int,
+    test_dataloader: DataLoader,
+    margin_list: List[int],
+    args_config: Dict,
+    n_models: int,
+    save_path: str,
+    var_coeff: float = 1.0,
+    device: str = "cpu",
+    verbose: bool = True,
+    write_metrics_filename: str = None,
+    min_th_quant: float = 0.1,
+    max_th_quant: float = 0.9,
+):
+    ens_model = EnsembleCPDModel(args=args_config, n_models=n_models)
+    ens_model.load_models_list(save_path)
+
+    test_out_bank, test_uncertainties_bank, test_labels_bank = (
+        collect_model_predictions_on_set(
+            ens_model, test_dataloader, model_type="ensemble", device=device
+        )
+    )
+
+    out_dataset = OutputDataset(
+        test_out_bank, test_uncertainties_bank, test_labels_bank
+    )
+    out_dataloader = DataLoader(
+        out_dataset, batch_size=128, shuffle=True
+    )  # batch size does not matter, shuffle to get a diverse batch
+
+    normal_sigma, cp_sigma, half_window = args_config["cusum"].values()
+    global_sigma = normal_sigma
+    lambda_null = 1.0 / cp_sigma**2
+    lambda_inf = 1.0 / normal_sigma**2
+
+    all_results = {}
+
+    for cusum_mode in ["old", "correct", "new_criteria"]:
+        for conditional in [False, True]:
+            if cusum_mode == "old" and not conditional:
+                continue
+
+            if verbose:
+                print(
+                    f"Evaluating CUSUM model with cusum_mode = {cusum_mode} and conditional = {conditional}"
+                )
+
+            # min_th, max_th = estimate_threshold_range(
+            #     model=ens_model,
+            #     test_batch=test_batch,
+            #     quant_min=min_th_quant,
+            #     quant_max=max_th_quant,
+            #     device=device,
+            # )
+
+            # cusum_threshold_list = np.linspace(min_th, max_th, threshold_number)
+
+            res_dict = evaluate_cusum_ensemble_model(
+                cusum_threshold_number=threshold_number,
+                output_dataloader=out_dataloader,
+                margin_list=margin_list,
+                args_config=args_config,
+                n_models=n_models,
+                # save_path=save_path,
+                cusum_mode=cusum_mode,
+                conditional=conditional,
+                global_sigma=global_sigma,
+                lambda_null=lambda_null,
+                lambda_inf=lambda_inf,
+                half_wnd=half_window,
+                var_coeff=var_coeff,
+                device="cpu",  # use 'fake cusum'
+                verbose=verbose,
+                write_metrics_filename=write_metrics_filename,
+                min_th_quant=min_th_quant,
+                max_th_quant=max_th_quant,
+            )
+
+            all_results[(cusum_mode, conditional)] = res_dict
+
+    return all_results
 
 
 def evaluate_distance_ensemble_model(

@@ -24,7 +24,6 @@ class EnsembleCPDModel(ABC):
         args: dict,
         n_models: int,
         boot_sample_size: int = None,
-        # seed: int = 0,
         train_anomaly_num: int = None,
     ) -> None:
         """Initialize EnsembleCPDModel.
@@ -33,7 +32,6 @@ class EnsembleCPDModel(ABC):
         :param n_models: number of models to train
         :param boot_sample_size: size of the bootstrapped train dataset
                                  (if None, all the models are trained on the original train dataset)
-        :param seed: random seed to be fixed
         """
         super().__init__()
 
@@ -82,6 +80,9 @@ class EnsembleCPDModel(ABC):
             self.train_datasets_list = [self.train_dataset] * self.n_models
 
         else:
+            # for reproducibility of torch.randint()
+            torch.manual_seed(42)
+
             self.train_datasets_list = []
             for _ in range(self.n_models):
                 # sample with replacement
@@ -310,7 +311,6 @@ class CusumEnsembleCPDModel(EnsembleCPDModel):
         global_sigma: Optional[
             Union[float, str]
         ] = None,  # float / 'local_start' / 'local_whole' / None (for 'non-cond' variants)
-        seed: int = 0,
         boot_sample_size: int = None,
         train_anomaly_num: int = None,
         cusum_threshold: float = 0.1,
@@ -332,9 +332,8 @@ class CusumEnsembleCPDModel(EnsembleCPDModel):
                              else:
                                 t = series_mean[i] - series_mean[i-1]
         :param susum_threshold: threshold for CUSUM algorithm
-        :param seed: random seed to be fixed
         """
-        super().__init__(args, n_models, boot_sample_size, seed, train_anomaly_num)
+        super().__init__(args, n_models, boot_sample_size, train_anomaly_num)
 
         assert cusum_mode in [
             "correct",
@@ -564,9 +563,9 @@ class CusumEnsembleCPDModel(EnsembleCPDModel):
     def fake_predict(self, series_batch: torch.Tensor, series_std_batch: torch.Tensor):
         """In case of pre-computed model outputs."""
         if self.cusum_mode in ["old", "correct"]:
-            return self.cusum_detector(series_batch, series_std_batch)[0]
+            return self.cusum_detector(series_batch, series_std_batch)  # [0]
         elif self.cusum_mode == "new_criteria":
-            return self.new_scores_aggregator(series_batch, series_std_batch)[0]
+            return self.new_scores_aggregator(series_batch, series_std_batch)  # [0]
 
 
 class DistanceEnsembleCPDModel(EnsembleCPDModel):
@@ -575,7 +574,6 @@ class DistanceEnsembleCPDModel(EnsembleCPDModel):
         args: dict,
         n_models: int,
         window_size: int,
-        seed: int = 0,
         boot_sample_size: int = None,
         train_anomaly_num: int = None,
         anchor_window_type: str = "start",
@@ -583,7 +581,7 @@ class DistanceEnsembleCPDModel(EnsembleCPDModel):
         distance: str = "mmd",
         kernel: str = "rbf",
     ) -> None:
-        super().__init__(args, n_models, boot_sample_size, seed, train_anomaly_num)
+        super().__init__(args, n_models, boot_sample_size, train_anomaly_num)
 
         assert anchor_window_type in [
             "sliding",
@@ -632,5 +630,5 @@ class DistanceEnsembleCPDModel(EnsembleCPDModel):
 
     def fake_predict(self, ensemble_preds: torch.Tensor):
         """In case of pre-computed model outputs."""
-        preds, _ = self.distance_detector(ensemble_preds.transpose(0, 1))
-        return preds
+        return self.distance_detector(ensemble_preds.transpose(0, 1))
+        # return preds, scores

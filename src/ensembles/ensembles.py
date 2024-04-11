@@ -301,18 +301,286 @@ class EnsembleCPDModel(ABC):
         self.fitted = True
 
 
-class CusumEnsembleCPDModel(EnsembleCPDModel):
+# class CusumEnsembleCPDModel(EnsembleCPDModel):
+#     """Wrapper for cusum aproach ensemble models."""
+
+#     def __init__(
+#         self,
+#         args: dict,
+#         n_models: int,
+#         global_sigma: Optional[
+#             Union[float, str]
+#         ] = None,  # float / 'local_start' / 'local_whole' / None (for 'non-cond' variants)
+#         boot_sample_size: int = None,
+#         train_anomaly_num: int = None,
+#         cusum_threshold: float = 0.1,
+#         cusum_mode: str = "correct",
+#         conditional: bool = False,
+#         lambda_null: float = None,
+#         lambda_inf: float = None,
+#         half_wnd: int = None,
+#         var_coeff: float = 1.0,
+#     ) -> None:
+#         """Initialize EnsembleCPDModel.
+
+#         :param args: dictionary containing core model params, learning params, loss params, etc.
+#         :param n_models: number of models to train
+#         :param boot_sample_size: size of the bootstrapped train dataset
+#                                  (if None, all the models are trained on the original train dataset)
+#         :param scale_by_std: if True, scale the statistic by predicted std, i.e.
+#                                 in cusum, t = series_mean[i] - series_mean[i-1]) / series_std[i],
+#                              else:
+#                                 t = series_mean[i] - series_mean[i-1]
+#         :param susum_threshold: threshold for CUSUM algorithm
+#         """
+#         super().__init__(args, n_models, boot_sample_size, train_anomaly_num)
+
+#         assert cusum_mode in [
+#             "correct",
+#             "old",
+#             "new_criteria",
+#         ], f"Wrong CUSUM mode: {cusum_mode}"
+
+#         if cusum_mode == "new_criteria":
+#             assert lambda_null is not None, "Specify lambda_null for 'new_crit'"
+#             # assert lambda_inf is not None, "Specify lambda_inf for 'new_crit'"
+#             assert half_wnd is not None, "Specify half_wnd for 'new_crit'"
+
+#         self.cusum_threshold = cusum_threshold
+#         self.cusum_mode = cusum_mode
+#         self.conditional = conditional
+
+#         if not self.conditional:
+#             assert (
+#                 global_sigma is not None
+#             ), "Global sigma is required for non-conditional statisctics."
+#             assert isinstance(global_sigma, float) or isinstance(
+#                 global_sigma, str
+#             ), "If not None, global_sigma should be either str or float"
+
+#             if isinstance(global_sigma, str):
+#                 assert global_sigma in [
+#                     "local_start",
+#                     "local_whole",
+#                 ], "Unknow local global_sigma type"
+#                 assert half_wnd is not None, "Need window size for local global_sigma"
+
+#         self.global_sigma = global_sigma
+
+#         self.lambda_null = lambda_null
+#         self.lambda_inf = lambda_inf
+#         self.half_wnd = half_wnd
+
+#         self.var_coeff = var_coeff
+
+#     def cusum_detector(
+#         self, series_batch: torch.Tensor, series_std_batch: torch.Tensor
+#     ) -> Tuple[torch.Tensor, torch.Tensor]:
+#         batch_size, seq_len = series_batch.shape
+
+#         normal_to_change_stat = torch.zeros(batch_size, seq_len).to(series_batch.device)
+#         change_mask = torch.zeros(batch_size, seq_len).to(series_batch.device)
+
+#         # TODO: check!
+#         if self.global_sigma == "local_start":
+#             global_sigma = series_std_batch[:, : 2 * self.half_wnd].mean(axis=1)
+#         elif self.global_sigma == "local_whole":
+#             global_sigma = series_std_batch.mean(axis=1)
+#         else:
+#             global_sigma = self.global_sigma
+
+#         for i in range(1, seq_len):
+#             # old CUSUM
+#             if self.cusum_mode == "old":
+#                 if self.conditional:
+#                     t = (series_batch[:, i] - series_batch[:, i - 1]) / (
+#                         series_std_batch[:, i] + EPS
+#                     )
+#                 else:
+#                     t = series_batch[:, i] - series_batch[:, i - 1] / (
+#                         global_sigma + EPS
+#                     )
+#             # new (correct) CUSUM
+#             else:
+#                 if self.conditional:
+#                     t = (series_batch[:, i] - 0.5) / (series_std_batch[:, i] ** 2 + EPS)
+#                 else:
+#                     t = (series_batch[:, i] - 0.5) / (global_sigma**2 + EPS)
+
+#             normal_to_change_stat[:, i] = torch.maximum(
+#                 torch.zeros(batch_size).to(series_batch.device),
+#                 normal_to_change_stat[:, i - 1] + t,
+#             )
+
+#             is_change = (
+#                 normal_to_change_stat[:, i]
+#                 > torch.ones(batch_size).to(series_batch.device) * self.cusum_threshold
+#             )
+#             change_mask[is_change, i:] = True
+
+#         return change_mask, normal_to_change_stat
+
+#     def new_scores_aggregator(
+#         self, series_batch: torch.Tensor, series_std_batch: torch.Tensor
+#     ) -> Tuple[torch.Tensor, torch.Tensor]:
+#         batch_size, seq_len = series_batch.shape
+
+#         normal_to_change_stat = torch.zeros(batch_size, seq_len).to(series_batch.device)
+#         change_mask = torch.zeros(batch_size, seq_len).to(series_batch.device)
+
+#         # TODO: check!
+#         if self.global_sigma == "local_start":
+#             global_sigma = series_std_batch[:, : 2 * self.half_wnd].mean(axis=1)
+#         elif self.global_sigma == "local_whole":
+#             global_sigma = series_std_batch.mean(axis=1)
+#         else:
+#             global_sigma = self.global_sigma
+
+#         if self.lambda_inf is None:
+#             # compute lambda_inf based on the local global_sigma
+#             lambda_inf = 1.0 / global_sigma**2
+#         else:
+#             lambda_inf = self.lambda_inf
+#         lambda_null = self.lambda_null
+
+#         for i in range(1, seq_len):
+#             if self.conditional:
+#                 t = (series_batch[:, i] - 0.5) / (series_std_batch[:, i] ** 2 + EPS)
+#             else:
+#                 t = (series_batch[:, i] - 0.5) / (global_sigma**2 + EPS)
+
+#             wnd_start = max(0, i - self.half_wnd)
+#             wnd_end = min(seq_len, i + self.half_wnd + 1)
+#             # wnd_end = i
+
+#             windom_var_sum = self.var_coeff * sum(
+#                 [series_std_batch[:, k] ** 2 for k in range(wnd_start, wnd_end)]
+#             )
+
+#             normal_to_change_stat[:, i] = torch.maximum(
+#                 (lambda_inf - lambda_null) * windom_var_sum,
+#                 normal_to_change_stat[:, i - 1] + t,
+#             )
+
+#             is_change = (
+#                 normal_to_change_stat[:, i]
+#                 > torch.ones(batch_size).to(series_batch.device) * self.cusum_threshold
+#             )
+#             change_mask[is_change, i:] = True
+
+#         return change_mask, normal_to_change_stat
+
+#     def sample_cusum_trajectories(self, inputs):
+#         if not self.fitted:
+#             print("Attention! The model is not fitted yet.")
+
+#         self.eval()
+
+#         ensemble_preds = []
+
+#         for model in self.models_list:
+#             ensemble_preds.append(model(inputs).squeeze())
+
+#         # shape is (n_models, batch_size, seq_len)
+#         ensemble_preds = torch.stack(ensemble_preds)
+
+#         _, batch_size, seq_len = ensemble_preds.shape
+
+#         preds_std = torch.std(ensemble_preds, axis=0).reshape(batch_size, seq_len)
+
+#         cusum_trajectories = []
+#         change_masks = []
+
+#         for preds_traj in ensemble_preds:
+#             # use one_like tensor of std's, do not take them into account
+#             # change_mask, normal_to_change_stat = self.cusum_detector_batch(preds_traj, torch.ones_like(preds_traj))
+#             change_mask, normal_to_change_stat = self.cusum_detector(
+#                 preds_traj, preds_std
+#             )
+#             cusum_trajectories.append(normal_to_change_stat)
+#             change_masks.append(change_mask)
+
+#         cusum_trajectories = torch.stack(cusum_trajectories)
+#         change_masks = torch.stack(change_masks)
+
+#         return change_masks, cusum_trajectories
+
+#     def predict(
+#         self, inputs: torch.Tensor, scale: int = None, step: int = 1, alpha: float = 1.0
+#     ) -> torch.Tensor:
+#         """Make a prediction.
+
+#         :param inputs: input batch of sequences
+
+#         :returns: torch.Tensor containing predictions of all the models
+#         """
+#         # shape is (n_models, batch_size, seq_len)
+#         ensemble_preds = self.predict_all_models(inputs, scale, step, alpha)
+
+#         _, batch_size, seq_len = ensemble_preds.shape
+
+#         preds_mean = torch.mean(ensemble_preds, axis=0).reshape(batch_size, seq_len)
+#         preds_std = torch.std(ensemble_preds, axis=0).reshape(batch_size, seq_len)
+
+#         if self.cusum_mode in ["old", "correct"]:
+#             change_masks, normal_to_change_stats = self.cusum_detector(
+#                 preds_mean, preds_std
+#             )
+#         else:
+#             change_masks, normal_to_change_stats = self.new_scores_aggregator(
+#                 preds_mean, preds_std
+#             )
+
+#         self.preds_mean = preds_mean
+#         self.preds_std = preds_std
+
+#         self.change_masks = change_masks
+#         self.normal_to_change_stats = normal_to_change_stats
+
+#         return change_masks
+
+#     def predict_cusum_trajectories(
+#         self, inputs: torch.Tensor, q: float = 0.5
+#     ) -> torch.Tensor:
+#         """Make a prediction.
+
+#         :param inputs: input batch of sequences
+
+#         :returns: torch.Tensor containing predictions of all the models
+#         """
+#         change_masks, _ = self.sample_cusum_trajectories(inputs)
+#         cp_idxs_batch = torch.argmax(change_masks, dim=2).float()
+#         cp_idxs_batch_aggr = torch.quantile(cp_idxs_batch, q, axis=0).round().int()
+#         _, bs, seq_len = change_masks.shape
+#         cusum_quantile_labels = torch.zeros(bs, seq_len).to(inputs.device)
+
+#         for b in range(bs):
+#             if cp_idxs_batch_aggr[b] > 0:
+#                 cusum_quantile_labels[b, cp_idxs_batch_aggr[b] :] = 1
+
+#         return cusum_quantile_labels
+
+#     def fake_predict(self, series_batch: torch.Tensor, series_std_batch: torch.Tensor):
+#         """In case of pre-computed model outputs."""
+#         if self.cusum_mode in ["old", "correct"]:
+#             return self.cusum_detector(series_batch, series_std_batch)  # [0]
+#         elif self.cusum_mode == "new_criteria":
+#             return self.new_scores_aggregator(series_batch, series_std_batch)  # [0]
+
+
+class CusumEnsembleCPDModel(ABC):
     """Wrapper for cusum aproach ensemble models."""
 
     def __init__(
         self,
-        args: dict,
-        n_models: int,
+        # args: dict,
+        # n_models: int,
+        ens_model,
         global_sigma: Optional[
             Union[float, str]
         ] = None,  # float / 'local_start' / 'local_whole' / None (for 'non-cond' variants)
-        boot_sample_size: int = None,
-        train_anomaly_num: int = None,
+        # boot_sample_size: int = None,
+        # train_anomaly_num: int = None,
         cusum_threshold: float = 0.1,
         cusum_mode: str = "correct",
         conditional: bool = False,
@@ -333,7 +601,7 @@ class CusumEnsembleCPDModel(EnsembleCPDModel):
                                 t = series_mean[i] - series_mean[i-1]
         :param susum_threshold: threshold for CUSUM algorithm
         """
-        super().__init__(args, n_models, boot_sample_size, train_anomaly_num)
+        super().__init__()
 
         assert cusum_mode in [
             "correct",
@@ -345,6 +613,8 @@ class CusumEnsembleCPDModel(EnsembleCPDModel):
             assert lambda_null is not None, "Specify lambda_null for 'new_crit'"
             # assert lambda_inf is not None, "Specify lambda_inf for 'new_crit'"
             assert half_wnd is not None, "Specify half_wnd for 'new_crit'"
+
+        self.ens_model = ens_model
 
         self.cusum_threshold = cusum_threshold
         self.cusum_mode = cusum_mode
@@ -372,6 +642,12 @@ class CusumEnsembleCPDModel(EnsembleCPDModel):
         self.half_wnd = half_wnd
 
         self.var_coeff = var_coeff
+
+    def eval(self):
+        self.ens_model.eval()
+
+    def to(self, device: str) -> None:
+        self.ens_model.to(device)
 
     def cusum_detector(
         self, series_batch: torch.Tensor, series_std_batch: torch.Tensor
@@ -471,14 +747,14 @@ class CusumEnsembleCPDModel(EnsembleCPDModel):
         return change_mask, normal_to_change_stat
 
     def sample_cusum_trajectories(self, inputs):
-        if not self.fitted:
+        if not self.ens_model.fitted:
             print("Attention! The model is not fitted yet.")
 
         self.eval()
 
         ensemble_preds = []
 
-        for model in self.models_list:
+        for model in self.ens_model.models_list:
             ensemble_preds.append(model(inputs).squeeze())
 
         # shape is (n_models, batch_size, seq_len)
@@ -515,7 +791,7 @@ class CusumEnsembleCPDModel(EnsembleCPDModel):
         :returns: torch.Tensor containing predictions of all the models
         """
         # shape is (n_models, batch_size, seq_len)
-        ensemble_preds = self.predict_all_models(inputs, scale, step, alpha)
+        ensemble_preds = self.ens_model.predict_all_models(inputs, scale, step, alpha)
 
         _, batch_size, seq_len = ensemble_preds.shape
 
@@ -568,20 +844,87 @@ class CusumEnsembleCPDModel(EnsembleCPDModel):
             return self.new_scores_aggregator(series_batch, series_std_batch)  # [0]
 
 
-class DistanceEnsembleCPDModel(EnsembleCPDModel):
+# class DistanceEnsembleCPDModel(EnsembleCPDModel):
+#     def __init__(
+#         self,
+#         args: dict,
+#         n_models: int,
+#         window_size: int,
+#         boot_sample_size: int = None,
+#         train_anomaly_num: int = None,
+#         anchor_window_type: str = "start",
+#         threshold: float = 0.1,
+#         distance: str = "mmd",
+#         kernel: str = "rbf",
+#     ) -> None:
+#         super().__init__(args, n_models, boot_sample_size, train_anomaly_num)
+
+#         assert anchor_window_type in [
+#             "sliding",
+#             "start",
+#             "prev",
+#             "combined",
+#         ], "Unknown window type"
+#         assert distance in [
+#             "mmd",
+#             "cosine",
+#             "wasserstein_1d",
+#             "wasserstein_nd",
+#         ], "Unknown distance type"
+
+#         if distance == "mmd":
+#             assert kernel in [
+#                 "rbf",
+#                 "multiscale",
+#             ], f"Wrong kernel type: {kernel}."
+
+#         self.anchor_window_type = anchor_window_type
+#         self.distance = distance
+#         self.window_size = window_size
+#         self.threshold = threshold
+#         self.kernel = kernel
+
+#     def distance_detector(self, ensemble_preds: torch.Tensor):
+#         # anchor windows: 'start', 'prev', or 'combined'
+#         scores = distances.anchor_window_detector_batch(
+#             ensemble_preds,
+#             window_size=self.window_size,
+#             distance=self.distance,
+#             kernel=self.kernel,
+#             anchor_window_type=self.anchor_window_type,
+#         )
+#         labels = (scores > self.threshold).to(torch.int)
+
+#         return labels, scores
+
+#     def predict(
+#         self, inputs: torch.Tensor, scale: int = None, step: int = 1, alpha: float = 1.0
+#     ) -> torch.Tensor:
+#         ensemble_preds = self.predict_all_models(inputs, scale, step, alpha)
+#         preds, _ = self.distance_detector(ensemble_preds)
+#         return preds
+
+#     def fake_predict(self, ensemble_preds: torch.Tensor):
+#         """In case of pre-computed model outputs."""
+#         return self.distance_detector(ensemble_preds.transpose(0, 1))
+#         # return preds, scores
+
+
+class DistanceEnsembleCPDModel(ABC):
     def __init__(
         self,
-        args: dict,
-        n_models: int,
+        ens_model,
+        # args: dict,
+        # n_models: int,
         window_size: int,
-        boot_sample_size: int = None,
-        train_anomaly_num: int = None,
+        # boot_sample_size: int = None,
+        # train_anomaly_num: int = None,
         anchor_window_type: str = "start",
         threshold: float = 0.1,
         distance: str = "mmd",
         kernel: str = "rbf",
     ) -> None:
-        super().__init__(args, n_models, boot_sample_size, train_anomaly_num)
+        super().__init__()
 
         assert anchor_window_type in [
             "sliding",
@@ -602,11 +945,19 @@ class DistanceEnsembleCPDModel(EnsembleCPDModel):
                 "multiscale",
             ], f"Wrong kernel type: {kernel}."
 
+        self.ens_model = ens_model
+
         self.anchor_window_type = anchor_window_type
         self.distance = distance
         self.window_size = window_size
         self.threshold = threshold
         self.kernel = kernel
+
+    def eval(self):
+        self.ens_model.eval()
+
+    def to(self, device: str) -> None:
+        self.ens_model.to(device)
 
     def distance_detector(self, ensemble_preds: torch.Tensor):
         # anchor windows: 'start', 'prev', or 'combined'
@@ -624,7 +975,7 @@ class DistanceEnsembleCPDModel(EnsembleCPDModel):
     def predict(
         self, inputs: torch.Tensor, scale: int = None, step: int = 1, alpha: float = 1.0
     ) -> torch.Tensor:
-        ensemble_preds = self.predict_all_models(inputs, scale, step, alpha)
+        ensemble_preds = self.ens_model.predict_all_models(inputs, scale, step, alpha)
         preds, _ = self.distance_detector(ensemble_preds)
         return preds
 

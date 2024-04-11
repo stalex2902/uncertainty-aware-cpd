@@ -1,14 +1,13 @@
+import itertools
 from datetime import datetime
-from typing import Dict, List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import pytorch_lightning as pl
-from src.datasets.datasets import OutputDataset
+from src.datasets.datasets import AllModelsOutputDataset, OutputDataset
 from src.ensembles.ensembles import (
     CusumEnsembleCPDModel,
     DistanceEnsembleCPDModel,
-    # CusumBayesCPDModel,
-    EnsembleCPDModel,
 )
 from src.metrics.metrics_utils import (
     F1_score,
@@ -250,12 +249,10 @@ def evaluation_pipeline(
 
 
 def evaluate_cusum_ensemble_model(
+    ens_model,
     cusum_threshold_number: List[float],
     output_dataloader: DataLoader,
     margin_list: List[int],
-    args_config: Dict,
-    n_models: int,
-    # save_path: str,
     cusum_mode: str,
     conditional: bool = False,
     global_sigma: float = None,
@@ -275,11 +272,8 @@ def evaluate_cusum_ensemble_model(
 
     # # TODO: repeatition!!!
     test_cusum_model = CusumEnsembleCPDModel(
-        args=args_config,
-        n_models=n_models,
+        ens_model=ens_model,
         global_sigma=global_sigma,
-        boot_sample_size=None,
-        train_anomaly_num=None,
         cusum_threshold=0.0,
         cusum_mode=cusum_mode,
         conditional=conditional,
@@ -303,12 +297,9 @@ def evaluate_cusum_ensemble_model(
 
     cusum_threshold_list = np.linspace(min_th, max_th, cusum_threshold_number)
 
-    # cusum_threshold_list = np.linspace(0, 100, cusum_threshold_number)
-
     for cusum_th in tqdm(cusum_threshold_list):
         cusum_model = CusumEnsembleCPDModel(
-            args=args_config,
-            n_models=n_models,
+            ens_model=ens_model,
             global_sigma=global_sigma,
             cusum_threshold=cusum_th,
             cusum_mode=cusum_mode,
@@ -318,8 +309,6 @@ def evaluate_cusum_ensemble_model(
             half_wnd=half_wnd,
             var_coeff=var_coeff,
         )
-        # no need to load state dicts because we use pre-computed outputs
-        # cusum_model.load_models_list(save_path)
 
         metrics_local, (max_th_f1_margins_dict, max_f1_margins_dict), _, _ = (
             evaluation_pipeline(
@@ -519,12 +508,10 @@ def evaluate_cusum_bayes_model(
 
 
 def all_cusums_evaluation_pipeline(
+    ens_model,
     threshold_number: int,
     test_dataloader: DataLoader,
     margin_list: List[int],
-    args_config: Dict,
-    n_models: int,
-    save_path: str,
     var_coeff: float = 1.0,
     device: str = "cpu",
     verbose: bool = True,
@@ -532,9 +519,6 @@ def all_cusums_evaluation_pipeline(
     min_th_quant: float = 0.1,
     max_th_quant: float = 0.9,
 ):
-    ens_model = EnsembleCPDModel(args=args_config, n_models=n_models)
-    ens_model.load_models_list(save_path)
-
     test_out_bank, test_uncertainties_bank, test_labels_bank = (
         collect_model_predictions_on_set(
             ens_model, test_dataloader, model_type="ensemble", device=device
@@ -548,7 +532,7 @@ def all_cusums_evaluation_pipeline(
         out_dataset, batch_size=128, shuffle=True
     )  # batch size does not matter, shuffle to get a diverse batch
 
-    normal_sigma, cp_sigma, half_window = args_config["cusum"].values()
+    normal_sigma, cp_sigma, half_window = ens_model.args["cusum"].values()
     global_sigma = normal_sigma
     lambda_null = 1.0 / cp_sigma**2
     lambda_inf = 1.0 / normal_sigma**2
@@ -566,12 +550,10 @@ def all_cusums_evaluation_pipeline(
                 )
 
             res_dict = evaluate_cusum_ensemble_model(
+                ens_model=ens_model,
                 cusum_threshold_number=threshold_number,
                 output_dataloader=out_dataloader,
                 margin_list=margin_list,
-                args_config=args_config,
-                n_models=n_models,
-                # save_path=save_path,
                 cusum_mode=cusum_mode,
                 conditional=conditional,
                 global_sigma=global_sigma,
@@ -592,16 +574,14 @@ def all_cusums_evaluation_pipeline(
 
 
 def evaluate_distance_ensemble_model(
+    ens_model,
     threshold_list: List[float],
     output_dataloader: DataLoader,
     margin_list: List[int],
-    args_config: Dict,
-    n_models: int,
     window_size: int,
-    save_path: str,
     anchor_window_type: str = "start",
-    distance: str = "mmd",
-    kernel: str = "rbf",
+    distance: str = "wasserstein",
+    kernel: Optional[str] = None,
     device: str = "cpu",
     verbose: bool = True,
     write_metrics_filename: str = None,
@@ -612,15 +592,13 @@ def evaluate_distance_ensemble_model(
 
     for th in tqdm(threshold_list):
         model = DistanceEnsembleCPDModel(
-            args=args_config,
-            n_models=n_models,
+            ens_model=ens_model,
             threshold=th,
             kernel=kernel,
             window_size=window_size,
             anchor_window_type=anchor_window_type,
             distance=distance,
         )
-        model.load_models_list(save_path)
 
         metrics_local, (_, max_f1_margins_dict), _, _ = evaluation_pipeline(
             model=model,
@@ -693,3 +671,54 @@ def evaluate_distance_ensemble_model(
                 f"Max F1 with margin {margin}: {np.round(_max_f1_margins_dict[margin], 4)}"
             )
     return res_dict, best_th
+
+
+def all_distances_evaluation_pipeline(
+    ens_model,
+    test_dataloader,
+    distance="wasserstein",
+    device="cpu",
+    verbose=True,
+    window_size_list=[1, 2, 3],
+    anchor_window_type_list=["start", "prev"],
+    threshold_list=np.linspace(0, 1, 50),
+):
+    test_out_bank, _, test_labels_bank = collect_model_predictions_on_set(
+        ens_model,
+        test_dataloader,
+        model_type="ensemble_all_models",
+        device=device,
+        verbose=verbose,
+    )
+
+    out_dataset = AllModelsOutputDataset(test_out_bank, test_labels_bank)
+
+    out_dataloader = DataLoader(
+        out_dataset, batch_size=128, shuffle=False
+    )  # batch size does not matter
+
+    res_dict = {}
+
+    for window_size, anchor_window_type in itertools.product(
+        window_size_list, anchor_window_type_list
+    ):
+        if verbose:
+            print(
+                f"window_size = {window_size}, anchor_window_type = {anchor_window_type}"
+            )
+
+        res, best_th = evaluate_distance_ensemble_model(
+            ens_model=ens_model,
+            threshold_list=threshold_list,
+            output_dataloader=out_dataloader,
+            margin_list=[1, 2, 4],
+            window_size=window_size,
+            anchor_window_type=anchor_window_type,
+            distance=distance,
+            device="cpu",
+            verbose=verbose,
+        )
+
+        res_dict[(window_size, anchor_window_type)] = res[best_th]
+
+    return res_dict

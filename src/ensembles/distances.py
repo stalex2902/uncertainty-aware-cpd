@@ -91,21 +91,20 @@ def wasserstein_distance_nd_batch(a, b):
 
 
 def anchor_window_detector_batch(
-    ensemble_preds,
+    ensemble_preds,  # output of .predict_all_model(), shape is (n_models, batch_size, seq_len)
     window_size,
     distance="mmd",
     kernel="rbf",
     anchor_window_type="start",
     bandwidth_range=None,
 ) -> torch.Tensor:
-    # ensemble_preds - output of .predict_all_model(), shape is (n_models, batch_size, seq_len)
-
     assert distance in [
         "mmd",
         "cosine",
         "wasserstein_1d",
         "wasserstein_nd",
     ], "Unknown distance type"
+
     assert anchor_window_type in ["start", "prev", "combined"], "Unknown window type"
 
     _, batch_size, seq_len = ensemble_preds.shape
@@ -145,7 +144,7 @@ def anchor_window_detector_batch(
         anchor_wnd = anchor_wnd.permute(1, 2, 0)
         future_wnd = ensemble_preds[
             :, :, future_idx - window_size : future_idx
-        ].permute(1, 2, 0)  # .transpose(0, 1).reshape(batch_size, -1, 1)
+        ].permute(1, 2, 0)
 
         if distance == "mmd":
             dist_batch = MMD_batch(

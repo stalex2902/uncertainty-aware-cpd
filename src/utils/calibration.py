@@ -2,7 +2,11 @@
 #                             From https://github.com/gpleiss/temperature_scaling                             #
 # ------------------------------------------------------------------------------------------------------------#
 
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
+from sklearn.calibration import calibration_curve
+from src.metrics.metrics_utils import collect_model_predictions_on_set
 from torch import nn, optim
 from torch.nn import functional as F
 from tqdm import tqdm
@@ -78,9 +82,6 @@ class ModelWithTemperature(nn.Module):
                 labels_list.append(label)
             logits = torch.cat(logits_list).cuda()
             labels = torch.cat(labels_list).cuda()
-
-            # print("logits:", logits.shape)
-            # print("labels:", labels.shape)
 
         # Calculate NLL and ECE before temperature scaling
         before_temperature_nll = nll_criterion(logits, labels).item()
@@ -172,3 +173,109 @@ class _ECELoss(nn.Module):
                 ece += torch.abs(avg_confidence_in_bin - accuracy_in_bin) * prop_in_bin
 
         return ece
+
+
+# ------------------------------------------------------------------------------------------------------------#
+#                                         Utils for calibration                                               #
+# ------------------------------------------------------------------------------------------------------------#
+
+
+def calibrate_single_model(
+    core_model,
+    val_dataloader,
+    preprocessor=None,
+    lr=1e-2,
+    max_iter=50,
+    verbose=True,
+    device="cpu",
+):
+    core_model.to(device)
+    if preprocessor:
+        preprocessor.to(device)
+
+    core_model.return_logits = True
+    scaled_model = ModelWithTemperature(
+        core_model, preprocessor=preprocessor, lr=lr, max_iter=max_iter, verbose=verbose
+    )
+    scaled_model.set_temperature(val_dataloader)
+    core_model.return_logits = False
+    return core_model
+
+
+def calibrate_all_models_in_ensemble(
+    ensemble_model,
+    val_dataloader,
+    preprocessor=None,
+    lr=1e-2,
+    max_iter=50,
+    verbose=True,
+    device="cpu",
+):
+    for cpd_model in ensemble_model.models_list:
+        _ = calibrate_single_model(
+            cpd_model.model,
+            val_dataloader,
+            preprocessor=preprocessor,
+            lr=lr,
+            max_iter=max_iter,
+            verbose=verbose,
+            device=device,
+        )
+
+
+def manually_calibrate_all_models_in_ensemble(ensemble_model, temperature_list):
+    for cpd_model, T in zip(ensemble_model.models_list, temperature_list):
+        cpd_model.model.temperature = T
+
+
+def uncalibrate_all_models_in_ensemble(ensemble_model):
+    for cpd_model in ensemble_model.models_list:
+        cpd_model.model.temperature = 1.0
+
+
+def plot_calibration_curves(
+    models_list,
+    test_dataloader,
+    model_type="seq2seq",
+    device="cpu",
+    title=None,
+    verbose=False,
+):
+    x_ideal = np.linspace(0, 1, 20)
+
+    plt.figure(figsize=(10, 8))
+    plt.plot(x_ideal, x_ideal, linestyle="--", label="Ideally calibrated", c="black")
+
+    for i, cpd_model in enumerate(models_list):
+        test_out_bank, _, test_labels_bank = collect_model_predictions_on_set(
+            cpd_model,
+            test_dataloader,
+            model_type=model_type,
+            device=device,
+            verbose=verbose,
+        )
+
+        test_out_flat = torch.vstack(test_out_bank).flatten()
+        test_labels_flat = torch.vstack(test_labels_bank).flatten()
+
+        prob_true, prob_pred = calibration_curve(
+            test_labels_flat, test_out_flat, n_bins=10
+        )
+
+        plt.plot(
+            prob_pred,
+            prob_true,
+            linestyle="--",
+            marker="o",
+            markersize=4,
+            linewidth=1,
+            label=f"Model num {i}",
+        )
+    if title:
+        plt.title(title, fontsize=14)
+    plt.xlabel("Predicted probability", fontsize=12)
+    plt.ylabel("Fraction of positives", fontsize=12)
+    plt.xticks(fontsize=12)
+    plt.yticks(fontsize=12)
+    plt.legend(fontsize=12)
+    plt.show()

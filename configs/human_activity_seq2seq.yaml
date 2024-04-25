@@ -18,3 +18,8 @@ early_stopping:
   monitor: "val_loss"
   min_delta: 0
   patience: 10
+
+cusum:
+  normal_sigma: 0.0164
+  cp_sigma: 0.0321
+  half_window: 1

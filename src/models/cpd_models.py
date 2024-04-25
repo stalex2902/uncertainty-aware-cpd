@@ -1,38 +1,24 @@
 """Methods and modules for experiments with seq2seq modeld ('indid', 'bce' and 'combided')"""
-from . import loss
 
-from typing import List, Optional
-
+import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset
-
-import numpy as np
-import random
-
 from sklearn.base import BaseEstimator
-
-def fix_seeds(seed: int) -> None:
-    """Fix random seeds for experiments reproducibility.
-
-    :param seed: random seed
-    """
-    torch.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.cuda.manual_seed_all(seed)
-    random.seed(seed)
-    np.random.seed(seed)
+from src.datasets import datasets
+from src.loss import loss
+from torch.utils.data import DataLoader, Dataset
 
 
 class ClassicBaseline(nn.Module):
     """Class for classic (from ruptures) Baseline models."""
+
     def __init__(
         self,
         model: BaseEstimator,
         pen: float = None,
         n_pred: int = None,
-        device: str = 'cpu'
+        device: str = "cpu",
     ) -> None:
         """Initialize ClassicBaseline model.
 
@@ -52,38 +38,40 @@ class ClassicBaseline(nn.Module):
 
         :param inputs: input signal
         :return: tensor with predicted change point labels
-        """ 
+        """
         all_predictions = []
         for i, seq in enumerate(inputs):
             # (n_samples, n_dims)
             try:
                 signal = seq.flatten(1, 2).detach().cpu().numpy()
-            except:
+            except:  # noqa: E722
                 signal = seq.detach().cpu().numpy()
-            algo = self.model.fit(signal)
+            _ = self.model.fit(signal)
             cp_pred = []
             if self.pen is not None:
                 cp_pred = self.model.predict(pen=self.pen)
             elif self.n_pred is not None:
-                cp_pred = self.model.predict(self.n_pred) 
+                cp_pred = self.model.predict(self.n_pred)
             else:
-                cp_pred = self.model.predict()                 
+                cp_pred = self.model.predict()
             cp_pred = cp_pred[0]
             baselines_pred = np.zeros(inputs.shape[1])
-            baselines_pred[cp_pred:] = np.ones(inputs.shape[1] - cp_pred)        
+            baselines_pred[cp_pred:] = np.ones(inputs.shape[1] - cp_pred)
             all_predictions.append(baselines_pred)
         out = torch.from_numpy(np.array(all_predictions))
         return out
 
+
 class CPDModel(pl.LightningModule):
     """Pytorch Lightning wrapper for change point detection models."""
+
     def __init__(
         self,
         loss_type: str,
         args: dict,
         model: nn.Module,
         train_dataset: Dataset,
-        test_dataset: Dataset
+        test_dataset: Dataset,
     ) -> None:
         """Initialize CPD model.
 
@@ -98,10 +86,13 @@ class CPDModel(pl.LightningModule):
 
         self.experiments_name = args["experiments_name"]
         self.model = model
-        
+
         if self.experiments_name in ["explosion", "road_accidents"]:
             self.extractor = torch.hub.load(
-                "facebookresearch/pytorchvideo:main", "x3d_m", pretrained=True, verbose=False
+                "facebookresearch/pytorchvideo:main",
+                "x3d_m",
+                pretrained=True,
+                verbose=False,
             )
             self.extractor = nn.Sequential(*list(self.extractor.blocks[:5]))
 
@@ -130,15 +121,23 @@ class CPDModel(pl.LightningModule):
         self.train_dataset = train_dataset
         self.test_dataset = test_dataset
 
+        # hot-fix
+        # if self.extractor:
+        #     self.complete_model = nn.Sequential(self.extractor, self.model)
+        # else:
+        #     self.complete_model = self.model
+
     def __preprocess(self, input: torch.Tensor) -> torch.Tensor:
         """Preprocess batch before forwarding (i.e. apply extractor for video input).
 
         :param input: input torch.Tensor
-        :return: processed input tensor to be fed into .forward method 
+        :return: processed input tensor to be fed into .forward method
         """
         if self.experiments_name in ["explosion", "road_accidents"]:
-            input = self.extractor(input.float()) 
-            input = input.transpose(1, 2).flatten(2) # shape is (batch_size,  C*H*W, seq_len)
+            input = self.extractor(input.float())
+            input = input.transpose(1, 2).flatten(
+                2
+            )  # shape is (batch_size,  C*H*W, seq_len)
 
         # do nothing for non-video experiments
         return input
@@ -223,6 +222,7 @@ class CPDModel(pl.LightningModule):
             num_workers=self.num_workers,
         )
 
+
 class Baseline_model(pl.LightningModule):
     """Pytorch Lightning wrapper for change point detection models."""
 
@@ -234,7 +234,7 @@ class Baseline_model(pl.LightningModule):
         lr: float = 1e-3,
         batch_size: int = 64,
         num_workers: int = 4,
-        subseq_len=None
+        subseq_len=None,
     ) -> None:
         """Initialize Baseline model.
 
@@ -245,7 +245,7 @@ class Baseline_model(pl.LightningModule):
         :param batch_size: batch size for training
         :param num_workers: number of CPUs
         :param subseq_len: length of the subsequence (for 'weak_labels' baseline)
-        """ 
+        """
         super().__init__()
         self.model = model
 
@@ -272,7 +272,7 @@ class Baseline_model(pl.LightningModule):
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """Perform forward pass."""
-        
+
         return self.model(inputs)
 
     def training_step(self, batch: torch.Tensor, batch_idx: int) -> torch.Tensor:

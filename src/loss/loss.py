@@ -1,4 +1,5 @@
 """Methods for calculating principle loss function (InDiD) for Change Point Detection."""
+
 from typing import Tuple
 
 import numpy as np

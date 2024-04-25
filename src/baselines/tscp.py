@@ -1,13 +1,15 @@
 """Functions & models for TS-CP2 baseline training and testing."""
-from typing import Tuple, List, Optional
-from tsai.models.TCN import TCN
+
+from typing import List, Optional, Tuple
+
+import numpy as np
+import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset
-import pytorch_lightning as pl
-import numpy as np
-
 import torch.nn.functional as F
+from torch.utils.data import DataLoader, Dataset
+
+# from tsai.models.TCN import TCN
 
 # --------------------------------------------------------------------------------------#
 #                                      Loss                                             #
@@ -55,7 +57,7 @@ def nce_loss_fn(
     """
     try:
         device = history.device
-    except:
+    except AttributeError:
         device = "cpu"
 
     criterion = torch.nn.BCEWithLogitsLoss()
@@ -364,8 +366,8 @@ class ResidualBlock(nn.Module):
             padding=0,
             dilation=self.dilation_rate,
         )
-        if self.use_weight_norm:
-            weight_norm(self.conv_1)
+        # if self.use_weight_norm:
+        #    weight_norm(self.conv_1)
         self.bn_1 = nn.BatchNorm1d(self.nb_filters)
         self.ln_1 = nn.LayerNorm(self.nb_filters)
         self.relu_1 = nn.ReLU()
@@ -377,8 +379,8 @@ class ResidualBlock(nn.Module):
             padding=0,
             dilation=self.dilation_rate,
         )
-        if self.use_weight_norm:
-            weight_norm(self.conv_1)
+        # if self.use_weight_norm:
+        #    weight_norm(self.conv_1)
         self.bn_2 = nn.BatchNorm1d(self.nb_filters)
         self.ln_2 = nn.LayerNorm(self.nb_filters)
         self.relu_2 = nn.ReLU()

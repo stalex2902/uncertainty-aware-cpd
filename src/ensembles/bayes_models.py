@@ -1,25 +1,26 @@
+from typing import List, Tuple
+
+import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-from torch.utils.data import DataLoader, Dataset
-
 import torchbnn as bnn
-
-import pytorch_lightning as pl
-
-from typing import Any, Tuple, List
+from src.loss import loss
+from torch.utils.data import DataLoader, Dataset
 
 EPS = 1e-9
 
-def labels_to_window_mask(labels_batch: torch.Tensor, reg_mode: str, half_wnd: int = None):
+
+def labels_to_window_mask(
+    labels_batch: torch.Tensor, reg_mode: str, half_wnd: int = None
+):
     """Utility for std regularization."""
-    
-    assert mode in ["window", "right_part"], f"Unknown mode {mode}."
-    
-    if mode == "window":
+
+    assert reg_mode in ["window", "right_part"], f"Unknown mode {reg_mode}."
+
+    if reg_mode == "window":
         assert half_wnd is not None, "Specify half window size."
-        
+
     cp_indexes = labels_batch.argmax(dim=1)
     abnormal_wnd_mask = torch.zeros_like(labels_batch)
 
@@ -28,7 +29,7 @@ def labels_to_window_mask(labels_batch: torch.Tensor, reg_mode: str, half_wnd: i
     for i in range(batch_size):
         row_mask = torch.zeros(seq_len)
         if cp_indexes[i] > 0:
-            if mode == "window":
+            if reg_mode == "window":
                 wnd_start = max(cp_indexes[i] - half_wnd, 0)
                 wnd_end = min(cp_indexes[i] + half_wnd, seq_len)
             else:
@@ -39,9 +40,11 @@ def labels_to_window_mask(labels_batch: torch.Tensor, reg_mode: str, half_wnd: i
             abnormal_wnd_mask[i] = row_mask
     return abnormal_wnd_mask
 
+
 ################################################################################################
 #                                         TOTAL BAYES                                          #
 ################################################################################################
+
 
 class BayesLSTM(nn.Module):
     def __init__(
@@ -51,37 +54,42 @@ class BayesLSTM(nn.Module):
         dropout: float = 0.0,
         n_layers: int = 1,
         batch_first=True,
-        
-        prior_mu: float = 0.,
-        prior_sigma: float = 1.
-        
+        prior_mu: float = 0.0,
+        prior_sigma: float = 1.0,
     ) -> None:
         super().__init__()
 
         self.hidden_dim = hidden_dim
         self.batch_first = batch_first
-            
-        self.linear_w = nn.ModuleList([
-            bnn.BayesLinear(
-                prior_mu=prior_mu,
-                prior_sigma=prior_sigma,
-                in_features=input_dim,
-                out_features=hidden_dim
-        ) for _ in range(4)])
-        
-        self.linear_u = nn.ModuleList([
-            bnn.BayesLinear(
-                prior_mu=prior_mu,
-                prior_sigma=prior_sigma,
-                in_features=hidden_dim,
-                out_features=hidden_dim
-        ) for _ in range(4)])
-        
+
+        self.linear_w = nn.ModuleList(
+            [
+                bnn.BayesLinear(
+                    prior_mu=prior_mu,
+                    prior_sigma=prior_sigma,
+                    in_features=input_dim,
+                    out_features=hidden_dim,
+                )
+                for _ in range(4)
+            ]
+        )
+
+        self.linear_u = nn.ModuleList(
+            [
+                bnn.BayesLinear(
+                    prior_mu=prior_mu,
+                    prior_sigma=prior_sigma,
+                    in_features=hidden_dim,
+                    out_features=hidden_dim,
+                )
+                for _ in range(4)
+            ]
+        )
+
         self.dropout = dropout
         self.n_layers = n_layers
 
     def forward(self, inputs, init_states=None):
-
         if self.batch_first:
             # sequence first (timesteps, batch_size, input_dims)
             inputs = inputs.transpose(0, 1)
@@ -99,19 +107,21 @@ class BayesLSTM(nn.Module):
         for x_t in inputs:
             x_f, x_i, x_o, x_c_hat = [linear(x_t) for linear in self.linear_w]
             h_f, h_i, h_o, h_c_hat = [linear(h_prev) for linear in self.linear_u]
-            
+
             f_t = torch.sigmoid(x_f + h_f)
             i_t = torch.sigmoid(x_i + h_i)
             o_t = torch.sigmoid(x_o + h_o)
             c_t_hat = torch.tanh(x_c_hat + h_c_hat)
-            
+
             c_prev = torch.mul(f_t, c_prev) + torch.mul(i_t, c_t_hat)
             h_prev = torch.mul(o_t, torch.tanh(c_prev))
-            
+
             if self.dropout > 0:
                 F.dropout(h_prev, p=self.dropout, training=self.training, inplace=True)
 
-            outputs.append(h_prev)#.clone().detach()) # NOTE fail with detach. check it
+            outputs.append(
+                h_prev
+            )  # .clone().detach()) # NOTE fail with detach. check it
 
         outputs = torch.stack(outputs, dim=0)
 
@@ -120,19 +130,19 @@ class BayesLSTM(nn.Module):
             outputs = outputs.transpose(0, 1)
 
         return outputs, (h_prev, c_prev)
-    
+
 
 class BaseBayesRnn(nn.Module):
     """LSTM-based network for experiments with Synthetic Normal data and Human Activity."""
+
     def __init__(
         self,
         input_size: int,
         hidden_dim: int,
         n_layers: int,
         drop_prob: float,
-        
         prior_mu: float,
-        prior_sigma: float
+        prior_sigma: float,
     ) -> None:
         """Initialize model's parameters.
 
@@ -147,7 +157,7 @@ class BaseBayesRnn(nn.Module):
         self.input_size = input_size
         self.n_layers = n_layers
         self.hidden_dim = hidden_dim
-        
+
         self.lstm = BayesLSTM(
             input_size,
             hidden_dim,
@@ -155,16 +165,16 @@ class BaseBayesRnn(nn.Module):
             n_layers=n_layers,
             batch_first=True,
             prior_mu=prior_mu,
-            prior_sigma=prior_sigma
+            prior_sigma=prior_sigma,
         )
-        
+
         self.linear = bnn.BayesLinear(
             prior_mu=prior_mu,
             prior_sigma=prior_sigma,
             in_features=hidden_dim,
-            out_features=1
+            out_features=1,
         )
-        
+
         self.activation = nn.Sigmoid()
 
     def forward(self, input_seq: torch.Tensor) -> torch.Tensor:
@@ -181,8 +191,10 @@ class BaseBayesRnn(nn.Module):
         out = out.view(batch_size, -1)
         return out
 
+
 class MnistBayesRNN(nn.Module):
     """Recurrent network for MNIST experiments."""
+
     def __init__(
         self,
         input_size: int,
@@ -192,9 +204,8 @@ class MnistBayesRNN(nn.Module):
         rnn_dropout: float = 0.0,
         dropout: float = 0.5,
         rnn_type: str = "LSTM",
-        
-        prior_mu: float = 0.,
-        prior_sigma: float = 0.1
+        prior_mu: float = 0.0,
+        prior_sigma: float = 0.1,
     ) -> None:
         """Initialize model's parameters.
 
@@ -213,12 +224,12 @@ class MnistBayesRNN(nn.Module):
             self.rnn = BayesLSTM(
                 input_size,
                 hidden_rnn,
-                #rnn_n_layers,
+                # rnn_n_layers,
                 dropout=rnn_dropout,
                 n_layers=rnn_n_layers,
                 batch_first=True,
                 prior_mu=prior_mu,
-                prior_sigma=prior_sigma
+                prior_sigma=prior_sigma,
             )
         elif rnn_type == "GRU":
             self.rnn = nn.GRU(
@@ -247,7 +258,7 @@ class MnistBayesRNN(nn.Module):
                     prior_mu=prior_mu,
                     prior_sigma=prior_sigma,
                     in_features=linear_dims[i],
-                    out_features=linear_dims[i + 1]
+                    out_features=linear_dims[i + 1],
                 )
                 for i in range(len(linear_dims) - 1)
             ]
@@ -256,7 +267,7 @@ class MnistBayesRNN(nn.Module):
             prior_mu=prior_mu,
             prior_sigma=prior_sigma,
             in_features=linear_dims[-1],
-            out_features=1
+            out_features=1,
         )
         self.dropout = nn.Dropout(dropout)
         self.sigmoid = nn.Sigmoid()
@@ -288,78 +299,76 @@ class MnistBayesRNN(nn.Module):
 
 
 class CombinedVideoBayesRNN(nn.Module):
-        """LSTM-based network for experiments with videos."""
-        def __init__(
-            self,
-            input_dim: int,
-            rnn_hidden_dim: int,
-            num_layers: int,
-            rnn_dropout: float,
-            dropout: float,
+    """LSTM-based network for experiments with videos."""
 
-            prior_mu: float,
-            prior_sigma: float
+    def __init__(
+        self,
+        input_dim: int,
+        rnn_hidden_dim: int,
+        num_layers: int,
+        rnn_dropout: float,
+        dropout: float,
+        prior_mu: float,
+        prior_sigma: float,
+    ) -> None:
+        """Initialize combined LSTM model for video datasets.
 
-            ) -> None:
-            """ Initialize combined LSTM model for video datasets.
+        :param input_dim: dimension of the input data (after feature extraction)
+        :param rnn_hidden_dim: hidden dimension for LSTM block
+        :param rnn_dropuot: dropout probability in LSTM block
+        :param dropout: dropout probability in Dropout layer
+        """
+        super().__init__()
 
-            :param input_dim: dimension of the input data (after feature extraction)
-            :param rnn_hidden_dim: hidden dimension for LSTM block
-            :param rnn_dropuot: dropout probability in LSTM block
-            :param dropout: dropout probability in Dropout layer
-            """
-            super().__init__()
+        self.prior_mu = prior_mu
+        self.prior_sigma = prior_sigma
 
-            self.prior_mu = prior_mu
-            self.prior_sigma = prior_sigma
+        self.rnn = BayesLSTM(
+            input_dim,
+            rnn_hidden_dim,
+            dropout=rnn_dropout,
+            n_layers=num_layers,
+            batch_first=True,
+            prior_mu=prior_mu,
+            prior_sigma=prior_sigma,
+        )
 
-            self.rnn = BayesLSTM(
-                input_dim,
-                rnn_hidden_dim,
-                dropout=rnn_dropout,
-                n_layers=num_layers,
-                batch_first=True,
-                prior_mu=prior_mu,
-                prior_sigma=prior_sigma
-            )
+        self.fc = bnn.BayesLinear(
+            prior_mu=self.prior_mu,
+            prior_sigma=self.prior_sigma,
+            in_features=rnn_hidden_dim,
+            out_features=1,
+        )
 
-            self.fc = bnn.BayesLinear(
-                prior_mu=self.prior_mu,
-                prior_sigma=self.prior_sigma,
-                in_features=rnn_hidden_dim,
-                out_features=1
-            )
+        self.dropout = nn.Dropout(dropout)
+        self.relu = nn.ReLU()
+        self.activation = nn.Sigmoid()
 
-            self.dropout = nn.Dropout(dropout)
-            self.relu = nn.ReLU()  
-            self.activation = nn.Sigmoid()        
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass through the model.
 
-        def forward(self, x: torch.Tensor) -> torch.Tensor:
-            """Forward pass through the model.
+        :param x: input torch tensor
+        :return: out of the model
+        """
+        r_out, _ = self.rnn(x)
+        r_out = self.dropout(self.fc(r_out))
+        out = torch.sigmoid(r_out)
+        return out
 
-            :param x: input torch tensor
-            :return: out of the model
-            """
-            r_out, _ = self.rnn(x)
-            r_out = self.dropout(self.fc(r_out))
-            out = torch.sigmoid(r_out)
-            return out
-    
-    
+
 class BayesCPDModel(pl.LightningModule):
     """Pytorch Lightning wrapper for change point detection models."""
+
     def __init__(
         self,
         args: dict,
         model: nn.Module,
         train_dataset: Dataset,
         test_dataset: Dataset,
-
         kl_coeff: float = None,
         n_samples: int = 10,
         std_coeff: float = None,
-        half_std_wnd: int = None
-
+        half_std_wnd: int = None,
     ) -> None:
         """Initialize CPD model.
 
@@ -374,7 +383,7 @@ class BayesCPDModel(pl.LightningModule):
 
         self.experiments_name = args["experiments_name"]
         self.model = model
-        
+
         if self.experiments_name in ["explosion", "road_accidents"]:
             print("Loading extractor...")
             self.extractor = torch.hub.load(
@@ -404,7 +413,7 @@ class BayesCPDModel(pl.LightningModule):
                     args["loss_type"]
                 )
             )
-        
+
         self.n_samples = n_samples
 
         self.train_dataset = train_dataset
@@ -415,21 +424,23 @@ class BayesCPDModel(pl.LightningModule):
 
         if self.kl_coeff is not None:
             self.bkl_loss = bnn.BKLLoss()
-        
+
         if self.std_coeff is not None:
             assert half_std_wnd is not None, "Specify wnd size for std regularization."
 
-        self.half_std_wnd = half_std_wnd 
+        self.half_std_wnd = half_std_wnd
 
     def __preprocess(self, inputs: torch.Tensor) -> torch.Tensor:
         """Preprocess batch before forwarding (i.e. apply extractor for video input).
 
         :param input: input torch.Tensor
-        :return: processed input tensor to be fed into .forward method 
+        :return: processed input tensor to be fed into .forward method
         """
         if self.experiments_name in ["explosion", "road_accidents"]:
-            inputs = self.extractor(inputs.float()) 
-            inputs = inputs.transpose(1, 2).flatten(2) # shape is (batch_size,  C*H*W, seq_len)
+            inputs = self.extractor(inputs.float())
+            inputs = inputs.transpose(1, 2).flatten(
+                2
+            )  # shape is (batch_size,  C*H*W, seq_len)
 
         # do nothing for non-video experiments
         return inputs
@@ -441,27 +452,31 @@ class BayesCPDModel(pl.LightningModule):
         :return: predictions
         """
         return self.model(self.__preprocess(inputs))
-    
+
     def sample_predictions(self, inputs: torch.Tensor) -> torch.Tensor:
-        
         preds = []
         for _ in range(self.n_samples):
             preds.append(self.model(inputs))
-        
+
         preds = torch.stack(preds)
         self.preds = preds
-        
+
         return preds
-    
-    def predict(self, inputs: torch.Tensor, scale: float = None, step: int = 1, alpha: float = 1.) -> Tuple[torch.Tensor, torch.Tensor]:
-        
+
+    def predict(
+        self,
+        inputs: torch.Tensor,
+        scale: float = None,
+        step: int = 1,
+        alpha: float = 1.0,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         preds = self.sample_predictions(inputs)
-        
+
         mean_preds = torch.mean(preds, axis=0)
         std_preds = torch.std(preds, axis=0)
-        
+
         return mean_preds, std_preds
-    
+
     def training_step(self, batch: torch.Tensor, batch_idx: int) -> torch.Tensor:
         """Train CPD model.
 
@@ -473,7 +488,7 @@ class BayesCPDModel(pl.LightningModule):
         pred = self.forward(inputs.float())
 
         loss = self.loss(pred.squeeze(), labels.float().squeeze())
-        
+
         train_accuracy = (
             ((pred.squeeze() > 0.5).long() == labels.squeeze()).float().mean()
         )
@@ -487,25 +502,31 @@ class BayesCPDModel(pl.LightningModule):
             loss += self.kl_coeff * bkl_loss
 
         if self.std_coeff is not None:
-            std_wnd_mask = labels_to_window_mask(labels, mode="window", half_wnd=self.half_std_wnd)
+            std_wnd_mask = labels_to_window_mask(
+                labels, mode="window", half_wnd=self.half_std_wnd
+            )
 
             _, std_preds = self.predict(inputs)
 
-            target_stds_abnorm = std_preds[std_wnd_mask == 1] 
-            sigma_loss_abnorm = torch.mean(target_stds_abnorm) if len(target_stds_abnorm) > 0 else 0.0
+            target_stds_abnorm = std_preds[std_wnd_mask == 1]
+            sigma_loss_abnorm = (
+                torch.mean(target_stds_abnorm) if len(target_stds_abnorm) > 0 else 0.0
+            )
 
-            target_stds_norm = std_preds[std_wnd_mask == 0] 
-            sigma_loss_norm = torch.mean(target_stds_norm) if len(target_stds_norm) > 0 else 0.0
+            target_stds_norm = std_preds[std_wnd_mask == 0]
+            sigma_loss_norm = (
+                torch.mean(target_stds_norm) if len(target_stds_norm) > 0 else 0.0
+            )
 
-            sigma_loss = sigma_loss_norm - sigma_loss_abnorm 
+            sigma_loss = sigma_loss_norm - sigma_loss_abnorm
 
             self.log("train_std_loss", sigma_loss, prog_bar=True)
 
             loss += self.std_coeff * sigma_loss
-            
+
         self.log("train_loss", loss, prog_bar=True)
         self.log("train_acc", train_accuracy, prog_bar=True)
-        
+
         return loss
 
     def validation_step(self, batch: torch.Tensor, batch_idx: int) -> torch.Tensor:
@@ -531,24 +552,30 @@ class BayesCPDModel(pl.LightningModule):
 
             self.log("val_bkl_loss", bkl_loss, prog_bar=True)
             loss += self.kl_coeff * bkl_loss
-        
+
         if self.std_coeff is not None:
-            std_wnd_mask = labels_to_window_mask(labels, mode="window", half_wnd=self.half_std_wnd)
+            std_wnd_mask = labels_to_window_mask(
+                labels, mode="window", half_wnd=self.half_std_wnd
+            )
 
             _, std_preds = self.predict(inputs)
 
-            target_stds_abnorm = std_preds[std_wnd_mask == 1] 
-            sigma_loss_abnorm = torch.mean(target_stds_abnorm) if len(target_stds_abnorm) > 0 else 0.0
+            target_stds_abnorm = std_preds[std_wnd_mask == 1]
+            sigma_loss_abnorm = (
+                torch.mean(target_stds_abnorm) if len(target_stds_abnorm) > 0 else 0.0
+            )
 
-            target_stds_norm = std_preds[std_wnd_mask == 0] 
-            sigma_loss_norm = torch.mean(target_stds_norm) if len(target_stds_norm) > 0 else 0.0
+            target_stds_norm = std_preds[std_wnd_mask == 0]
+            sigma_loss_norm = (
+                torch.mean(target_stds_norm) if len(target_stds_norm) > 0 else 0.0
+            )
 
             sigma_loss = sigma_loss_norm - sigma_loss_abnorm
 
             self.log("val_std_loss", sigma_loss, prog_bar=True)
 
             loss += self.std_coeff * sigma_loss
-        
+
         self.log("val_loss", loss, prog_bar=True)
         self.log("val_acc", val_accuracy, prog_bar=True)
 
@@ -596,7 +623,6 @@ class CusumBayesCPDModel(BayesCPDModel):
         model: nn.Module,
         train_dataset: Dataset,
         test_dataset: Dataset,
-        
         global_sigma: float = None,
         kl_coeff: float = None,
         std_coeff: float = None,
@@ -607,64 +633,75 @@ class CusumBayesCPDModel(BayesCPDModel):
         lambda_null: float = None,
         lambda_inf: float = None,
         half_wnd: int = None,
-        var_coeff: float = 1.
-
+        var_coeff: float = 1.0,
     ) -> None:
-        super().__init__(args, model, train_dataset, test_dataset, kl_coeff, n_samples, std_coeff)
+        super().__init__(
+            args, model, train_dataset, test_dataset, kl_coeff, n_samples, std_coeff
+        )
 
-        assert cusum_mode in ["correct", "old", "new_criteria"], f"Wrong CUSUM mode: {cusum_mode}"
-        
+        assert cusum_mode in [
+            "correct",
+            "old",
+            "new_criteria",
+        ], f"Wrong CUSUM mode: {cusum_mode}"
+
         self.cusum_threshold = cusum_threshold
         self.cusum_mode = cusum_mode
         self.conditional = conditional
         self.global_sigma = global_sigma
-        
+
         self.lambda_null = lambda_null
         self.lambda_inf = lambda_inf
         self.half_wnd = half_wnd
-        
+
         self.var_coeff = var_coeff
-            
+
     def cusum_detector(
         self, series_batch: torch.Tensor, series_std_batch: torch.Tensor
-        ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         batch_size, seq_len = series_batch.shape
-        
+
         normal_to_change_stat = torch.zeros(batch_size, seq_len).to(series_batch.device)
         change_mask = torch.zeros(batch_size, seq_len).to(series_batch.device)
-        
+
         for i in range(1, seq_len):
             # old CUSUM
             if self.cusum_mode == "old":
                 if self.conditional:
-                    t = (series_batch[:, i] - series_batch[:, i - 1]) / (series_std_batch[:, i] + EPS)
+                    t = (series_batch[:, i] - series_batch[:, i - 1]) / (
+                        series_std_batch[:, i] + EPS
+                    )
 
                 else:
                     assert self.global_sigma is not None, "Specify global_sigma"
-                    t = series_batch[:, i] - series_batch[:, i - 1] / (self.global_sigma + EPS)
-                    
+                    t = series_batch[:, i] - series_batch[:, i - 1] / (
+                        self.global_sigma + EPS
+                    )
+
             # new (correct) CUSUM
             else:
                 if self.conditional:
                     t = (series_batch[:, i] - 0.5) / (series_std_batch[:, i] ** 2 + EPS)
                 else:
                     assert self.global_sigma is not None, "Specify global_sigma"
-                    t = (series_batch[:, i] - 0.5) / (self.global_sigma ** 2 + EPS)
+                    t = (series_batch[:, i] - 0.5) / (self.global_sigma**2 + EPS)
 
             normal_to_change_stat[:, i] = torch.maximum(
                 torch.zeros(batch_size).to(series_batch.device),
-                normal_to_change_stat[:, i - 1] + t
+                normal_to_change_stat[:, i - 1] + t,
             )
-            
-            is_change = normal_to_change_stat[:, i] > torch.ones(batch_size).to(series_batch.device) * self.cusum_threshold
+
+            is_change = (
+                normal_to_change_stat[:, i]
+                > torch.ones(batch_size).to(series_batch.device) * self.cusum_threshold
+            )
             change_mask[is_change, i:] = True
-            
+
         return change_mask, normal_to_change_stat
-    
+
     def new_scores_aggregator(
         self, series_batch: torch.Tensor, series_std_batch: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        
         assert self.global_sigma is not None, "Specify global_sigma"
         assert self.lambda_null is not None, "Specify lambda_null"
         assert self.lambda_inf is not None, "Specify lambda_inf"
@@ -676,99 +713,115 @@ class CusumBayesCPDModel(BayesCPDModel):
         change_mask = torch.zeros(batch_size, seq_len).to(series_batch.device)
 
         for i in range(1, seq_len):
-
             if self.conditional:
                 t = (series_batch[:, i] - 0.5) / (series_std_batch[:, i] ** 2 + EPS)
             else:
-                t = (series_batch[:, i] - 0.5) / (self.global_sigma ** 2 + EPS)
+                t = (series_batch[:, i] - 0.5) / (self.global_sigma**2 + EPS)
 
             wnd_start = max(0, i - self.half_wnd)
             wnd_end = min(seq_len, i + self.half_wnd + 1)
-            #wnd_end = i
+            # wnd_end = i
 
-            windom_var_sum = self.var_coeff * sum([series_std_batch[:, k] ** 2 for k in range(wnd_start, wnd_end)])
+            windom_var_sum = self.var_coeff * sum(
+                [series_std_batch[:, k] ** 2 for k in range(wnd_start, wnd_end)]
+            )
 
             normal_to_change_stat[:, i] = torch.maximum(
                 (self.lambda_inf - self.lambda_null) * windom_var_sum,
-                normal_to_change_stat[:, i - 1] + t
+                normal_to_change_stat[:, i - 1] + t,
             )
 
             is_change = (
-                normal_to_change_stat[:, i] > 
-                torch.ones(batch_size).to(series_batch.device) * self.cusum_threshold
+                normal_to_change_stat[:, i]
+                > torch.ones(batch_size).to(series_batch.device) * self.cusum_threshold
             )
             change_mask[is_change, i:] = True
 
         return change_mask, normal_to_change_stat
-    
+
     def sample_cusum_trajectories(self, inputs):
-        
-        preds = self.sample_predictions(inputs) # shape is (n_samples, batch_size, seq_len)
-        n_samples, batch_size, seq_len = preds.shape
-        
-        preds_mean = torch.mean(preds, axis=0).reshape(batch_size, seq_len)
+        preds = self.sample_predictions(
+            inputs
+        )  # shape is (n_samples, batch_size, seq_len)
+        _, batch_size, seq_len = preds.shape
+
+        # preds_mean = torch.mean(preds, axis=0).reshape(batch_size, seq_len)
         preds_std = torch.std(preds, axis=0).reshape(batch_size, seq_len)
-        
+
         cusum_trajectories = []
         change_masks = []
-        
+
         for preds_traj in preds:
             # use one_like tensor of std's, do not take them into account
-            change_mask, normal_to_change_stat = self.cusum_detector(preds_traj, preds_std)
+            change_mask, normal_to_change_stat = self.cusum_detector(
+                preds_traj, preds_std
+            )
             cusum_trajectories.append(normal_to_change_stat)
             change_masks.append(change_mask)
-        
+
         cusum_trajectories = torch.stack(cusum_trajectories)
         change_masks = torch.stack(change_masks)
-        
+
         return change_masks, cusum_trajectories
-       
-    def predict(self, inputs: torch.Tensor, scale: float = None, step: int = 1, alpha: float = 1.0) -> torch.Tensor:
+
+    def predict(
+        self,
+        inputs: torch.Tensor,
+        scale: float = None,
+        step: int = 1,
+        alpha: float = 1.0,
+    ) -> torch.Tensor:
         """Make a prediction.
-        
+
         :param inputs: input batch of sequences
-        
+
         :returns: torch.Tensor containing predictions of all the models
         """
         preds = self.sample_predictions(inputs)
-        
+
         preds_mean = torch.mean(preds, axis=0)
         preds_std = torch.std(preds, axis=0)
 
         if self.cusum_mode in ["old", "correct"]:
-            change_masks, normal_to_change_stats = self.cusum_detector(preds_mean, preds_std)
+            change_masks, normal_to_change_stats = self.cusum_detector(
+                preds_mean, preds_std
+            )
         else:
-            change_masks, normal_to_change_stats = self.new_scores_aggregator(preds_mean, preds_std)
-               
+            change_masks, normal_to_change_stats = self.new_scores_aggregator(
+                preds_mean, preds_std
+            )
+
         self.preds_mean = preds_mean
         self.preds_std = preds_std
         self.change_masks = change_masks
         self.normal_to_change_stats = normal_to_change_stats
-        
+
         return change_masks
-    
-    def predict_cusum_trajectories(self, inputs: torch.Tensor, q: float = 0.5) -> torch.Tensor:
+
+    def predict_cusum_trajectories(
+        self, inputs: torch.Tensor, q: float = 0.5
+    ) -> torch.Tensor:
         """Make a prediction.
-        
+
         :param inputs: input batch of sequences
-        
+
         :returns: torch.Tensor containing predictions of all the models
         """
         change_masks, _ = self.sample_cusum_trajectories(inputs)
         cp_idxs_batch = torch.argmax(change_masks, dim=2).float()
-        
+
         cp_idxs_batch_aggr = torch.quantile(cp_idxs_batch, q, axis=0).round().int()
-        
+
         _, bs, seq_len = change_masks.shape
-        
+
         cusum_quantile_labels = torch.zeros(bs, seq_len).to(inputs.device)
-        
+
         for b in range(bs):
             if cp_idxs_batch_aggr[b] > 0:
-                cusum_quantile_labels[b, cp_idxs_batch_aggr[b]:] = 1
-        
+                cusum_quantile_labels[b, cp_idxs_batch_aggr[b] :] = 1
+
         return cusum_quantile_labels
-    
+
     def fake_predict(self, series_batch: torch.Tensor, series_std_batch: torch.Tensor):
         """In case of pre-computed model outputs."""
         if self.cusum_mode in ["old", "correct"]:
@@ -784,15 +837,15 @@ class CusumBayesCPDModel(BayesCPDModel):
 
 class BaseLinearBayesRnn(nn.Module):
     """LSTM-based network for experiments with Synthetic Normal data and Human Activity."""
+
     def __init__(
         self,
         input_size: int,
         hidden_dim: int,
         n_layers: int,
         drop_prob: float,
-
         prior_mu: float,
-        prior_sigma: float
+        prior_sigma: float,
     ) -> None:
         """Initialize model's parameters.
 
@@ -810,13 +863,15 @@ class BaseLinearBayesRnn(nn.Module):
         self.input_size = input_size
         self.n_layers = n_layers
         self.hidden_dim = hidden_dim
-        self.lstm = nn.LSTM(input_size, hidden_dim, n_layers, dropout=drop_prob, batch_first=True)
+        self.lstm = nn.LSTM(
+            input_size, hidden_dim, n_layers, dropout=drop_prob, batch_first=True
+        )
 
         self.linear = bnn.BayesLinear(
             prior_mu=self.prior_mu,
             prior_sigma=self.prior_sigma,
             in_features=hidden_dim,
-            out_features=1
+            out_features=1,
         )
 
         self.activation = nn.Sigmoid()
@@ -829,15 +884,16 @@ class BaseLinearBayesRnn(nn.Module):
         """
         batch_size = input_seq.size(0)
         lstm_out, hidden = self.lstm(input_seq.float())
-        lstm_out = lstm_out.contiguous().view(-1, self.hidden_dim)        
-        out = self.linear(lstm_out)        
-        out = self.activation(out)        
-        out = out.view(batch_size, -1)        
+        lstm_out = lstm_out.contiguous().view(-1, self.hidden_dim)
+        out = self.linear(lstm_out)
+        out = self.activation(out)
+        out = out.view(batch_size, -1)
         return out
 
-    
+
 class MnistLinearBayesRNN(nn.Module):
     """Recurrent network for MNIST experiments."""
+
     def __init__(
         self,
         input_size: int,
@@ -847,9 +903,8 @@ class MnistLinearBayesRNN(nn.Module):
         rnn_dropout: float = 0.0,
         dropout: float = 0.5,
         rnn_type: str = "LSTM",
-
         prior_mu: float = 0,
-        prior_sigma: float = 0.5
+        prior_sigma: float = 0.5,
     ) -> None:
         """Initialize model's parameters.
 
@@ -899,14 +954,14 @@ class MnistLinearBayesRNN(nn.Module):
                 for i in range(len(linear_dims) - 1)
             ]
         )
-        
-        #self.output_layer = nn.Linear(linear_dims[-1], 1)
-        
+
+        # self.output_layer = nn.Linear(linear_dims[-1], 1)
+
         self.output_layer = bnn.BayesLinear(
             prior_mu=prior_mu,
             prior_sigma=prior_sigma,
             in_features=linear_dims[-1],
-            out_features=1
+            out_features=1,
         )
 
         self.dropout = nn.Dropout(dropout)
@@ -937,77 +992,76 @@ class MnistLinearBayesRNN(nn.Module):
         out = out.reshape(batch_size, seq_len, 1)
         return out
 
+
 class CombinedVideoLinearBayesRNN(nn.Module):
-        """LSTM-based network for experiments with videos."""
-        def __init__(
-            self,
-            input_dim: int,
-            rnn_hidden_dim: int,
-            num_layers: int,
-            rnn_dropout: float,
-            dropout: float,
+    """LSTM-based network for experiments with videos."""
 
-            prior_mu: float,
-            prior_sigma: float
+    def __init__(
+        self,
+        input_dim: int,
+        rnn_hidden_dim: int,
+        num_layers: int,
+        rnn_dropout: float,
+        dropout: float,
+        prior_mu: float,
+        prior_sigma: float,
+    ) -> None:
+        """Initialize combined LSTM model for video datasets.
 
-            ) -> None:
-            """ Initialize combined LSTM model for video datasets.
+        :param input_dim: dimension of the input data (after feature extraction)
+        :param rnn_hidden_dim: hidden dimension for LSTM block
+        :param rnn_dropuot: dropout probability in LSTM block
+        :param dropout: dropout probability in Dropout layer
+        """
+        super().__init__()
 
-            :param input_dim: dimension of the input data (after feature extraction)
-            :param rnn_hidden_dim: hidden dimension for LSTM block
-            :param rnn_dropuot: dropout probability in LSTM block
-            :param dropout: dropout probability in Dropout layer
-            """
-            super().__init__()
+        self.prior_mu = prior_mu
+        self.prior_sigma = prior_sigma
 
-            self.prior_mu = prior_mu
-            self.prior_sigma = prior_sigma
+        self.rnn = nn.LSTM(
+            input_size=input_dim,
+            hidden_size=rnn_hidden_dim,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=rnn_dropout,
+        )
 
-            self.rnn = nn.LSTM(
-                input_size=input_dim,
-                hidden_size=rnn_hidden_dim, 
-                num_layers=num_layers,
-                batch_first=True, 
-                dropout=rnn_dropout
-            )
+        # self.fc = nn.Linear(rnn_hidden_dim, 1)
 
-            #self.fc = nn.Linear(rnn_hidden_dim, 1)
+        self.fc = bnn.BayesLinear(
+            prior_mu=self.prior_mu,
+            prior_sigma=self.prior_sigma,
+            in_features=rnn_hidden_dim,
+            out_features=1,
+        )
 
-            self.fc = bnn.BayesLinear(
-                prior_mu=self.prior_mu,
-                prior_sigma=self.prior_sigma,
-                in_features=rnn_hidden_dim,
-                out_features=1
-            )
+        self.dropout = nn.Dropout(dropout)
+        self.relu = nn.ReLU()
+        self.activation = nn.Sigmoid()
 
-            self.dropout = nn.Dropout(dropout)
-            self.relu = nn.ReLU()  
-            self.activation = nn.Sigmoid()        
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass through the model.
 
-        def forward(self, x: torch.Tensor) -> torch.Tensor:
-            """Forward pass through the model.
+        :param x: input torch tensor
+        :return: out of the model
+        """
+        r_out, _ = self.rnn(x)
+        r_out = self.dropout(self.fc(r_out))
+        out = torch.sigmoid(r_out)
+        return out
 
-            :param x: input torch tensor
-            :return: out of the model
-            """
-            r_out, _ = self.rnn(x)
-            r_out = self.dropout(self.fc(r_out))
-            out = torch.sigmoid(r_out)
-            return out
 
-    
 class LinearBayesCPDModel(pl.LightningModule):
     """Pytorch Lightning wrapper for change point detection models."""
+
     def __init__(
         self,
         args: dict,
         model: nn.Module,
         train_dataset: Dataset,
         test_dataset: Dataset,
-
         kl_coeff: float = None,
-        n_samples: int = 10
-
+        n_samples: int = 10,
     ) -> None:
         """Initialize CPD model.
 
@@ -1022,7 +1076,7 @@ class LinearBayesCPDModel(pl.LightningModule):
 
         self.experiments_name = args["experiments_name"]
         self.model = model
-        
+
         if self.experiments_name in ["explosion", "road_accidents"]:
             print("Loading extractor...")
             self.extractor = torch.hub.load(
@@ -1054,7 +1108,7 @@ class LinearBayesCPDModel(pl.LightningModule):
             )
 
         self.kl_coeff = kl_coeff
-        
+
         self.n_samples = n_samples
 
         if self.kl_coeff is not None:
@@ -1067,11 +1121,13 @@ class LinearBayesCPDModel(pl.LightningModule):
         """Preprocess batch before forwarding (i.e. apply extractor for video input).
 
         :param input: input torch.Tensor
-        :return: processed input tensor to be fed into .forward method 
+        :return: processed input tensor to be fed into .forward method
         """
         if self.experiments_name in ["explosion", "road_accidents"]:
-            input = self.extractor(input.float()) 
-            input = input.transpose(1, 2).flatten(2) # shape is (batch_size,  C*H*W, seq_len)
+            input = self.extractor(input.float())
+            input = input.transpose(1, 2).flatten(
+                2
+            )  # shape is (batch_size,  C*H*W, seq_len)
 
         # do nothing for non-video experiments
         return input
@@ -1083,27 +1139,27 @@ class LinearBayesCPDModel(pl.LightningModule):
         :return: predictions
         """
         return self.model(self.__preprocess(inputs))
-    
+
     def sample_predictions(self, inputs: torch.Tensor) -> torch.Tensor:
-        
         preds = []
         for _ in range(self.n_samples):
             preds.append(self.forward(inputs))
-        
+
         preds = torch.stack(preds)
         self.preds = preds
-        
+
         return preds
-    
-    def predict(self, inputs: torch.Tensor, scale: int = None) -> Tuple[torch.Tensor, torch.Tensor]:
-        
+
+    def predict(
+        self, inputs: torch.Tensor, scale: int = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         preds = self.sample_predictions(inputs)
-        
+
         mean_preds = torch.mean(preds, axis=0)
         std_preds = torch.std(preds, axis=0)
-        
+
         return mean_preds, std_preds
-    
+
     def training_step(self, batch: torch.Tensor, batch_idx: int) -> torch.Tensor:
         """Train CPD model.
 
@@ -1156,7 +1212,7 @@ class LinearBayesCPDModel(pl.LightningModule):
 
         if self.kl_coeff is not None:
             bkl_loss = self.bkl_loss(self.model)
-            
+
             self.log("val_bkl_loss", bkl_loss, prog_bar=True)
             loss = val_loss + self.kl_coeff * bkl_loss
 

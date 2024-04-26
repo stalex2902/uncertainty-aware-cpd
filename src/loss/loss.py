@@ -44,7 +44,6 @@ class CPDLoss(nn.Module):
         delays = torch.arange(1, len_prob + 1).to(device) * prob * prob_no_change_before
 
         # (1 - p_0) * (1 - p_1) * ... * (1 - p_N)
-
         prod_prob_no_change = torch.prod(prob_no_change) * (
             torch.ones(1).to(device) - prob[-1]
         )

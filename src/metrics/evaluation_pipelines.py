@@ -297,7 +297,7 @@ def evaluate_cusum_ensemble_model(
 
     cusum_threshold_list = np.linspace(min_th, max_th, cusum_threshold_number)
 
-    for cusum_th in tqdm(cusum_threshold_list):
+    for cusum_th in tqdm(cusum_threshold_list, disable=not verbose):
         cusum_model = CusumEnsembleCPDModel(
             ens_model=ens_model,
             global_sigma=global_sigma,
@@ -590,7 +590,7 @@ def evaluate_distance_ensemble_model(
     best_th = None
     best_f1_global = 0
 
-    for th in tqdm(threshold_list):
+    for th in tqdm(threshold_list, disable=not verbose):
         model = DistanceEnsembleCPDModel(
             ens_model=ens_model,
             threshold=th,
@@ -680,6 +680,7 @@ def all_distances_evaluation_pipeline(
     device="cpu",
     verbose=True,
     window_size_list=[1, 2, 3],
+    margin_list=[1, 2, 4],
     anchor_window_type_list=["start", "prev"],
     threshold_list=np.linspace(0, 1, 50),
 ):
@@ -711,7 +712,7 @@ def all_distances_evaluation_pipeline(
             ens_model=ens_model,
             threshold_list=threshold_list,
             output_dataloader=out_dataloader,
-            margin_list=[1, 2, 4],
+            margin_list=margin_list,
             window_size=window_size,
             anchor_window_type=anchor_window_type,
             distance=distance,
@@ -722,3 +723,82 @@ def all_distances_evaluation_pipeline(
         res_dict[(window_size, anchor_window_type)] = res[best_th]
 
     return res_dict
+
+
+def evaluate_all_models_in_ensemble(
+    ens_model, test_dataloader, threshold_number, margin_list=None, verbose=True
+):
+    threshold_list = np.linspace(-5, 5, threshold_number)
+    threshold_list = 1 / (1 + np.exp(-threshold_list))
+    threshold_list = [-0.001] + list(threshold_list) + [1.001]
+
+    time_fa_list = []
+    delay_list = []
+    audc_list = []
+    f1_list = []
+    cover_list = []
+    max_cover_list = []
+    f1_m1_list = []
+    f1_m2_list = []
+    f1_m3_list = []
+
+    for model in tqdm(ens_model.models_list, disable=not verbose):
+        metrics, (_, max_f1_margins_dic), _, _ = evaluation_pipeline(
+            model,
+            test_dataloader,
+            threshold_list,
+            device="cpu",
+            model_type="seq2seq",
+            verbose=False,
+            margin_list=margin_list,
+        )
+
+        _, time_fa, delay, audc, _, f1, cover, _, max_cover = metrics
+        f1_m1, f1_m2, f1_m3 = max_f1_margins_dic.values()
+
+        time_fa_list.append(time_fa)
+        delay_list.append(delay)
+        audc_list.append(audc)
+        f1_list.append(f1)
+        cover_list.append(cover)
+        max_cover_list.append(max_cover)
+        f1_m1_list.append(f1_m1)
+        f1_m2_list.append(f1_m2)
+        f1_m3_list.append(f1_m3)
+
+    if verbose:
+        print(f"AUC: {round(np.mean(audc_list), 4)} \pm {round(np.std(audc_list), 4)}")
+        print(
+            f"Time to FA: {round(np.mean(time_fa_list), 4)} \pm {round(np.std(time_fa_list), 4)}"
+        )
+        print(
+            f"Delay detection: {round(np.mean(delay_list), 4)} \pm {round(np.std(delay_list), 4)}"
+        )
+        print(f"Max F1: {round(np.mean(f1_list), 4)} \pm {round(np.std(f1_list), 4)}")
+        print(
+            f"Cover: {round(np.mean(cover_list), 4)} \pm {round(np.std(cover_list), 4)}"
+        )
+        print(
+            f"Max cover: {round(np.mean(max_cover_list), 4)} \pm {round(np.std(max_cover_list), 4)}"
+        )
+        print(
+            f"Max F1 with m1: {round(np.mean(f1_m1_list), 4)} \pm {round(np.std(f1_m1_list), 4)}"
+        )
+        print(
+            f"Max F1 with m2: {round(np.mean(f1_m2_list), 4)} \pm {round(np.std(f1_m2_list), 4)}"
+        )
+        print(
+            f"Max F1 with m3: {round(np.mean(f1_m3_list), 4)} \pm {round(np.std(f1_m3_list), 4)}"
+        )
+
+    return (
+        time_fa_list,
+        delay_list,
+        audc_list,
+        f1_list,
+        cover_list,
+        max_cover_list,
+        f1_m1_list,
+        f1_m2_list,
+        f1_m3_list,
+    )

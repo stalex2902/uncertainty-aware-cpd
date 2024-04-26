@@ -121,12 +121,6 @@ class CPDModel(pl.LightningModule):
         self.train_dataset = train_dataset
         self.test_dataset = test_dataset
 
-        # hot-fix
-        # if self.extractor:
-        #     self.complete_model = nn.Sequential(self.extractor, self.model)
-        # else:
-        #     self.complete_model = self.model
-
     def __preprocess(self, input: torch.Tensor) -> torch.Tensor:
         """Preprocess batch before forwarding (i.e. apply extractor for video input).
 

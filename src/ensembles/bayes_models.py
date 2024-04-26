@@ -453,7 +453,9 @@ class BayesCPDModel(pl.LightningModule):
         """
         return self.model(self.__preprocess(inputs))
 
-    def sample_predictions(self, inputs: torch.Tensor) -> torch.Tensor:
+    def predict_all_models(
+        self, inputs: torch.Tensor, scale: int = None, step: int = 1, alpha: float = 1.0
+    ) -> torch.Tensor:  # change naming for consistency
         preds = []
         for _ in range(self.n_samples):
             preds.append(self.model(inputs))
@@ -470,7 +472,7 @@ class BayesCPDModel(pl.LightningModule):
         step: int = 1,
         alpha: float = 1.0,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        preds = self.sample_predictions(inputs)
+        preds = self.predict_all_models(inputs)
 
         mean_preds = torch.mean(preds, axis=0)
         std_preds = torch.std(preds, axis=0)
@@ -614,226 +616,11 @@ class BayesCPDModel(pl.LightningModule):
         )
 
 
-class CusumBayesCPDModel(BayesCPDModel):
-    """Wrapper for cusum aproach ensemble models."""
-
-    def __init__(
-        self,
-        args: dict,
-        model: nn.Module,
-        train_dataset: Dataset,
-        test_dataset: Dataset,
-        global_sigma: float = None,
-        kl_coeff: float = None,
-        std_coeff: float = None,
-        n_samples: int = 10,
-        cusum_threshold: float = 0.1,
-        cusum_mode: str = "correct",
-        conditional: bool = False,
-        lambda_null: float = None,
-        lambda_inf: float = None,
-        half_wnd: int = None,
-        var_coeff: float = 1.0,
-    ) -> None:
-        super().__init__(
-            args, model, train_dataset, test_dataset, kl_coeff, n_samples, std_coeff
-        )
-
-        assert cusum_mode in [
-            "correct",
-            "old",
-            "new_criteria",
-        ], f"Wrong CUSUM mode: {cusum_mode}"
-
-        self.cusum_threshold = cusum_threshold
-        self.cusum_mode = cusum_mode
-        self.conditional = conditional
-        self.global_sigma = global_sigma
-
-        self.lambda_null = lambda_null
-        self.lambda_inf = lambda_inf
-        self.half_wnd = half_wnd
-
-        self.var_coeff = var_coeff
-
-    def cusum_detector(
-        self, series_batch: torch.Tensor, series_std_batch: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        batch_size, seq_len = series_batch.shape
-
-        normal_to_change_stat = torch.zeros(batch_size, seq_len).to(series_batch.device)
-        change_mask = torch.zeros(batch_size, seq_len).to(series_batch.device)
-
-        for i in range(1, seq_len):
-            # old CUSUM
-            if self.cusum_mode == "old":
-                if self.conditional:
-                    t = (series_batch[:, i] - series_batch[:, i - 1]) / (
-                        series_std_batch[:, i] + EPS
-                    )
-
-                else:
-                    assert self.global_sigma is not None, "Specify global_sigma"
-                    t = series_batch[:, i] - series_batch[:, i - 1] / (
-                        self.global_sigma + EPS
-                    )
-
-            # new (correct) CUSUM
-            else:
-                if self.conditional:
-                    t = (series_batch[:, i] - 0.5) / (series_std_batch[:, i] ** 2 + EPS)
-                else:
-                    assert self.global_sigma is not None, "Specify global_sigma"
-                    t = (series_batch[:, i] - 0.5) / (self.global_sigma**2 + EPS)
-
-            normal_to_change_stat[:, i] = torch.maximum(
-                torch.zeros(batch_size).to(series_batch.device),
-                normal_to_change_stat[:, i - 1] + t,
-            )
-
-            is_change = (
-                normal_to_change_stat[:, i]
-                > torch.ones(batch_size).to(series_batch.device) * self.cusum_threshold
-            )
-            change_mask[is_change, i:] = True
-
-        return change_mask, normal_to_change_stat
-
-    def new_scores_aggregator(
-        self, series_batch: torch.Tensor, series_std_batch: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        assert self.global_sigma is not None, "Specify global_sigma"
-        assert self.lambda_null is not None, "Specify lambda_null"
-        assert self.lambda_inf is not None, "Specify lambda_inf"
-        assert self.half_wnd is not None, "Specify half_wnd"
-
-        batch_size, seq_len = series_batch.shape
-
-        normal_to_change_stat = torch.zeros(batch_size, seq_len).to(series_batch.device)
-        change_mask = torch.zeros(batch_size, seq_len).to(series_batch.device)
-
-        for i in range(1, seq_len):
-            if self.conditional:
-                t = (series_batch[:, i] - 0.5) / (series_std_batch[:, i] ** 2 + EPS)
-            else:
-                t = (series_batch[:, i] - 0.5) / (self.global_sigma**2 + EPS)
-
-            wnd_start = max(0, i - self.half_wnd)
-            wnd_end = min(seq_len, i + self.half_wnd + 1)
-            # wnd_end = i
-
-            windom_var_sum = self.var_coeff * sum(
-                [series_std_batch[:, k] ** 2 for k in range(wnd_start, wnd_end)]
-            )
-
-            normal_to_change_stat[:, i] = torch.maximum(
-                (self.lambda_inf - self.lambda_null) * windom_var_sum,
-                normal_to_change_stat[:, i - 1] + t,
-            )
-
-            is_change = (
-                normal_to_change_stat[:, i]
-                > torch.ones(batch_size).to(series_batch.device) * self.cusum_threshold
-            )
-            change_mask[is_change, i:] = True
-
-        return change_mask, normal_to_change_stat
-
-    def sample_cusum_trajectories(self, inputs):
-        preds = self.sample_predictions(
-            inputs
-        )  # shape is (n_samples, batch_size, seq_len)
-        _, batch_size, seq_len = preds.shape
-
-        # preds_mean = torch.mean(preds, axis=0).reshape(batch_size, seq_len)
-        preds_std = torch.std(preds, axis=0).reshape(batch_size, seq_len)
-
-        cusum_trajectories = []
-        change_masks = []
-
-        for preds_traj in preds:
-            # use one_like tensor of std's, do not take them into account
-            change_mask, normal_to_change_stat = self.cusum_detector(
-                preds_traj, preds_std
-            )
-            cusum_trajectories.append(normal_to_change_stat)
-            change_masks.append(change_mask)
-
-        cusum_trajectories = torch.stack(cusum_trajectories)
-        change_masks = torch.stack(change_masks)
-
-        return change_masks, cusum_trajectories
-
-    def predict(
-        self,
-        inputs: torch.Tensor,
-        scale: float = None,
-        step: int = 1,
-        alpha: float = 1.0,
-    ) -> torch.Tensor:
-        """Make a prediction.
-
-        :param inputs: input batch of sequences
-
-        :returns: torch.Tensor containing predictions of all the models
-        """
-        preds = self.sample_predictions(inputs)
-
-        preds_mean = torch.mean(preds, axis=0)
-        preds_std = torch.std(preds, axis=0)
-
-        if self.cusum_mode in ["old", "correct"]:
-            change_masks, normal_to_change_stats = self.cusum_detector(
-                preds_mean, preds_std
-            )
-        else:
-            change_masks, normal_to_change_stats = self.new_scores_aggregator(
-                preds_mean, preds_std
-            )
-
-        self.preds_mean = preds_mean
-        self.preds_std = preds_std
-        self.change_masks = change_masks
-        self.normal_to_change_stats = normal_to_change_stats
-
-        return change_masks
-
-    def predict_cusum_trajectories(
-        self, inputs: torch.Tensor, q: float = 0.5
-    ) -> torch.Tensor:
-        """Make a prediction.
-
-        :param inputs: input batch of sequences
-
-        :returns: torch.Tensor containing predictions of all the models
-        """
-        change_masks, _ = self.sample_cusum_trajectories(inputs)
-        cp_idxs_batch = torch.argmax(change_masks, dim=2).float()
-
-        cp_idxs_batch_aggr = torch.quantile(cp_idxs_batch, q, axis=0).round().int()
-
-        _, bs, seq_len = change_masks.shape
-
-        cusum_quantile_labels = torch.zeros(bs, seq_len).to(inputs.device)
-
-        for b in range(bs):
-            if cp_idxs_batch_aggr[b] > 0:
-                cusum_quantile_labels[b, cp_idxs_batch_aggr[b] :] = 1
-
-        return cusum_quantile_labels
-
-    def fake_predict(self, series_batch: torch.Tensor, series_std_batch: torch.Tensor):
-        """In case of pre-computed model outputs."""
-        if self.cusum_mode in ["old", "correct"]:
-            return self.cusum_detector(series_batch, series_std_batch)[0]
-        elif self.cusum_mode == "new_criteria":
-            return self.new_scores_aggregator(series_batch, series_std_batch)[0]
-
-
 ################################################################################################
 #                                       Linear Bayes                                           #
 ################################################################################################
 
+'''
 
 class BaseLinearBayesRnn(nn.Module):
     """LSTM-based network for experiments with Synthetic Normal data and Human Activity."""
@@ -1050,7 +837,6 @@ class CombinedVideoLinearBayesRNN(nn.Module):
         out = torch.sigmoid(r_out)
         return out
 
-
 class LinearBayesCPDModel(pl.LightningModule):
     """Pytorch Lightning wrapper for change point detection models."""
 
@@ -1252,3 +1038,5 @@ class LinearBayesCPDModel(pl.LightningModule):
             shuffle=False,
             num_workers=self.num_workers,
         )
+
+'''

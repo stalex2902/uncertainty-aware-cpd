@@ -20,6 +20,9 @@ class CPDLoss(nn.Module):
 
         self.len_segment = len_segment
 
+        self.delay_loss = 0
+        self.fa_loss = 0
+
     @staticmethod
     def calculate_delays_(prob: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Calculate delays (detection or false alarms) for probabilities.
@@ -99,12 +102,17 @@ class CPDLoss(nn.Module):
                 fp_loss += -torch.sum(delays) - (len_prob + 1) * torch.prod(
                     prod_prob_no_change
                 )
+
+                # fp_loss += -torch.sum(delays)
+
         else:
             # calculate FA loss
             delays, prod_prob_no_change = CPDLoss.calculate_delays_(prob)
             fp_loss = -torch.sum(delays) - (len_prob + 1) * torch.prod(
                 prod_prob_no_change
             )
+
+            # fp_loss = -torch.sum(delays)
         return fp_loss
 
     def forward(self, prob: torch.Tensor, true_labels: torch.Tensor) -> torch.Tensor:
@@ -139,6 +147,9 @@ class CPDLoss(nn.Module):
                 beta = 1
                 # print(alpha, beta)
                 loss_curr = alpha * delay_loss + beta * fp_loss
+
+                self.delay_loss = delay_loss
+                self.fa_loss = fp_loss
 
             loss += loss_curr
 

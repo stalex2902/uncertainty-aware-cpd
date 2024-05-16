@@ -35,8 +35,9 @@ def visualize_predictions(
         n_pics = len(sequences_batch)
 
     if model_type == "seq2seq":
-        preds = model(sequences_batch)
+        preds = model(sequences_batch).cpu()
         std = torch.zeros_like(preds)
+
     elif model_type == "tscp":
         preds = get_tscp_output(
             model,
@@ -47,6 +48,7 @@ def visualize_predictions(
         )
         preds = post_process_tscp_output(preds, alpha=alpha)
         std = torch.zeros_like(preds)
+
     elif model_type == "ensemble":
         preds, std = model.predict(sequences_batch, scale=scale, step=step, alpha=alpha)
         std = std.detach().cpu().squeeze()
@@ -62,14 +64,16 @@ def visualize_predictions(
     for idx in range(n_pics):
         plt.figure()
         plt.plot(preds[idx], label="Predictions")
-        plt.fill_between(
-            range(len(preds[idx])),
-            preds[idx] - std[idx],
-            preds[idx] + std[idx],
-            alpha=0.3,
-        )
+
+        if model_type == "ensemble":  # plot std
+            plt.fill_between(
+                range(len(preds[idx])),
+                preds[idx] - std[idx],
+                preds[idx] + std[idx],
+                alpha=0.3,
+            )
         plt.plot(labels_batch[idx], label="Labels")
-        plt.title("Mean +- std predictions", fontsize=14)
+        plt.title("Predictions", fontsize=14)
         plt.legend(fontsize=12)
         if save_path is not None:
             plt.savefig(f"{save_path}/batch_{batch_num_prefix}_seq_{idx}.png")

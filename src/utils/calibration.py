@@ -30,6 +30,8 @@ class ModelWithTemperature(nn.Module):
         self.lr = lr
         self.max_iter = max_iter
 
+        self.loss_history = []
+
     def get_logits(self, input):
         if self.preprocessor:
             input = self.preprocessor(input.float())
@@ -102,6 +104,9 @@ class ModelWithTemperature(nn.Module):
             optimizer.zero_grad()
             loss = nll_criterion(self.temperature_scale(logits), labels)
             loss.backward()
+
+            self.loss_history.append(round(loss.item(), 4))
+
             return loss
 
         optimizer.step(eval)
@@ -188,6 +193,7 @@ def calibrate_single_model(
     max_iter=50,
     verbose=True,
     device="cpu",
+    return_loss=False,
 ):
     core_model.to(device)
     if preprocessor:
@@ -199,7 +205,13 @@ def calibrate_single_model(
     )
     scaled_model.set_temperature(val_dataloader)
     core_model.return_logits = False
-    return core_model
+
+    # print("Loss calibration hystory:", scaled_model.loss_history)
+
+    if return_loss:
+        return core_model, scaled_model.loss_history
+    else:
+        return core_model, None
 
 
 def calibrate_all_models_in_ensemble(

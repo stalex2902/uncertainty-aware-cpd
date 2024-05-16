@@ -118,6 +118,8 @@ class CPDModel(pl.LightningModule):
                     loss_type
                 )
             )
+        self.loss_type = loss_type
+
         self.train_dataset = train_dataset
         self.test_dataset = test_dataset
 
@@ -159,6 +161,10 @@ class CPDModel(pl.LightningModule):
             ((pred.squeeze() > 0.5).long() == labels.squeeze()).float().mean()
         )
 
+        if self.loss_type == "indid":
+            self.log("train_delay_loss", self.loss.delay_loss, prog_bar=True)
+            self.log("train_fa_loss", self.loss.fa_loss, prog_bar=True)
+
         self.log("train_loss", train_loss, prog_bar=True)
         self.log("train_acc", train_accuracy, prog_bar=True)
 
@@ -178,6 +184,10 @@ class CPDModel(pl.LightningModule):
         val_accuracy = (
             ((pred.squeeze() > 0.5).long() == labels.squeeze()).float().mean()
         )
+
+        if self.loss_type == "indid":
+            self.log("val_delay_loss", self.loss.delay_loss, prog_bar=True)
+            self.log("val_fa_loss", self.loss.fa_loss, prog_bar=True)
 
         self.log("val_loss", val_loss, prog_bar=True)
         self.log("val_acc", val_accuracy, prog_bar=True)

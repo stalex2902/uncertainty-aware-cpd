@@ -77,6 +77,7 @@ class CPDDatasets:
         """
         train_dataset = None
         test_dataset = None
+
         if self.experiments_name == "mnist":
             path_to_data = "../../data/mnist/"
             dataset = MNISTSequenceDataset(path_to_data=path_to_data, type_seq="all")
@@ -227,10 +228,12 @@ class MNISTSequenceDataset(Dataset):
         self.normal_seq_paths = [
             os.path.join(self.path_to_normal, x)
             for x in os.listdir(self.path_to_normal)
+            if not x.startswith(".")
         ]
         self.with_change_seq_paths = [
             os.path.join(self.path_with_change, x)
             for x in os.listdir(self.path_with_change)
+            if not x.startswith(".")
         ]
 
         # load all sequences, only normal or only sequences with changes

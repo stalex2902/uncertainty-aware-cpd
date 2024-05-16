@@ -684,6 +684,8 @@ def write_metrics_to_file(
             max_cover,
         ),
         (best_th_f1_margin_dict, max_f1_margin_dict),
+        _,
+        _,
     ) = metrics
 
     with open(filename, "a") as f:

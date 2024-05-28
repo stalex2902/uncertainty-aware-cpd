@@ -63,6 +63,8 @@ class EnsembleCPDModel(ABC):
         self.fitted = False
         self.initialize_models_list()
 
+        self.calibrated = False
+
     def eval(self) -> None:
         """Turn all the models to 'eval' mode (for consistency with our code)."""
         for model in self.models_list:
@@ -151,7 +153,10 @@ class EnsembleCPDModel(ABC):
         for model in self.models_list:
             inputs = inputs.to(model.device)
             if self.args["model_type"] == "seq2seq":
-                outs = model(inputs).squeeze()
+                if self.calibrated:
+                    outs = model.get_predictions(inputs).squeeze()
+                else:
+                    outs = model(inputs).squeeze()
             elif self.args["model_type"] == "kl_cpd":
                 outs = klcpd.get_klcpd_output_scaled(
                     model, inputs, model.window_1, model.window_2, scale=scale
@@ -581,6 +586,7 @@ class DistanceEnsembleCPDModel(ABC):
         anchor_window_type: str = "start",
         threshold: float = 0.1,
         distance: str = "mmd",
+        p: int = 1,
         kernel: str = "rbf",
     ) -> None:
         super().__init__()
@@ -608,6 +614,7 @@ class DistanceEnsembleCPDModel(ABC):
 
         self.anchor_window_type = anchor_window_type
         self.distance = distance
+        self.p = p
         self.window_size = window_size
         self.threshold = threshold
         self.kernel = kernel
@@ -624,6 +631,7 @@ class DistanceEnsembleCPDModel(ABC):
             ensemble_preds,
             window_size=self.window_size,
             distance=self.distance,
+            p=self.p,
             kernel=self.kernel,
             anchor_window_type=self.anchor_window_type,
         )

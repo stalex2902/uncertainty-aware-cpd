@@ -1,6 +1,9 @@
+import math
+
 import numpy as np
 import torch
 from numba import jit
+from ot import wasserstein_1d
 from scipy.stats import wasserstein_distance, wasserstein_distance_nd
 
 
@@ -57,7 +60,7 @@ def MMD_batch(x, y, kernel, bandwidth_range=None):
 
 
 @jit
-def wasserstein_distance_1d_batch(a, b):
+def wasserstein_distance_1d_batch(a, b, p):
     # a, b: (batch_size, window_size, num_models)
 
     batch_size = a.shape[0]
@@ -68,7 +71,10 @@ def wasserstein_distance_1d_batch(a, b):
         sample_1 = a[i].flatten()  # (window_size * num_models)
         sample_2 = b[i].flatten()
 
-        curr_dist = wasserstein_distance(sample_1, sample_2)
+        if p == 1:
+            curr_dist = wasserstein_distance(sample_1, sample_2)
+        else:
+            curr_dist = math.pow(wasserstein_1d(sample_1, sample_2, p=p), 1 / p)
 
         dist_batch.append(curr_dist)
 
@@ -98,6 +104,7 @@ def anchor_window_detector_batch(
     ensemble_preds,  # output of .predict_all_model(), shape is (n_models, batch_size, seq_len)
     window_size,
     distance="mmd",
+    p=1,
     kernel="rbf",
     anchor_window_type="start",
     bandwidth_range=None,
@@ -157,7 +164,7 @@ def anchor_window_detector_batch(
                 anchor_wnd, future_wnd, kernel=kernel, bandwidth_range=bandwidth_range
             )
         elif distance == "wasserstein_1d":
-            dist_batch = wasserstein_distance_1d_batch(anchor_wnd, future_wnd)
+            dist_batch = wasserstein_distance_1d_batch(anchor_wnd, future_wnd, p=p)
         else:
             dist_batch = wasserstein_distance_nd_batch(anchor_wnd, future_wnd)
 

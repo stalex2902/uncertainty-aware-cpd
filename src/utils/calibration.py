@@ -7,7 +7,9 @@ import numpy as np
 import torch
 from betacal import BetaCalibration
 from sklearn.calibration import calibration_curve
-from src.metrics.metrics_utils import collect_model_predictions_on_set
+from src.metrics.metrics_utils import (
+    collect_model_predictions_on_set,
+)
 from torch import nn, optim
 from torch.nn import functional as F
 from tqdm import tqdm
@@ -69,20 +71,21 @@ class ModelWithTemperature(nn.Module):
             NOT the softmax (or log softmax)!
     """
 
-    def __init__(self, model, preprocessor=None, lr=1e-2, max_iter=50, verbose=True):
+    def __init__(self, model, lr=1e-2, max_iter=50, device="cpu"):
         super(ModelWithTemperature, self).__init__()
         self.model = model
         self.temperature = nn.Parameter(torch.ones(1) * 1.5)
-        self.preprocessor = preprocessor
+        # self.preprocessor = preprocessor
         self.lr = lr
         self.max_iter = max_iter
+        self.device = device
 
         self.loss_history = []
 
     def get_logits(self, input):
-        if self.preprocessor:
-            input = self.preprocessor(input.float())
-            input = input.transpose(1, 2).flatten(2)
+        # if self.preprocessor:
+        #     input = self.preprocessor(input.float())
+        #     input = input.transpose(1, 2).flatten(2)
         logits = self.model(input)
         return logits
 
@@ -179,13 +182,23 @@ class ModelWithTemperature(nn.Module):
 
         return self
 
-    def predict(self, dataloader, model_type="seq2seq", device="cpu", verbose=False):
+    def get_predictions(self, inputs):  # seq2seq ONLY
+        # if self.preprocessor:
+        #     inputs = self.preprocessor(inputs.float())
+        #     inputs = inputs.transpose(1, 2).flatten(2)
+        cal_preds = self.model(inputs)
+        return cal_preds
+
+    def predict_all(
+        self, dataloader, model_type="seq2seq", device="cpu", verbose=False
+    ):
         test_out_bank, _, test_labels_bank = collect_model_predictions_on_set(
             self.model,
             dataloader,
             model_type=model_type,
             device=device,
             verbose=verbose,
+            # preprocessor=self.preprocessor,
         )
         preds_cal_flat = torch.vstack(test_out_bank).flatten()
         labels_flat = torch.vstack(test_labels_bank).flatten()
@@ -202,12 +215,20 @@ class ModelBeta:
             NOT the softmax (or log softmax)!
     """
 
-    def __init__(self, model, parameters="abm", preprocessor=None, verbose=True):
+    def __init__(self, model, parameters="abm", device="cpu"):
         super(ModelBeta, self).__init__()
         self.model = model
-        self.preprocessor = preprocessor
+        # self.preprocessor = preprocessor
 
         self.calibrator = BetaCalibration(parameters)
+
+        self.device = device
+
+    def eval(self):
+        self.model.eval()
+
+    def to(self, device):
+        self.model.to(self.device)
 
     # This function probably should live outside of this class, but whatever
     def fit(self, dataoader, model_type="seq2seq", device="cuda", verbose=True):
@@ -231,7 +252,18 @@ class ModelBeta:
 
         return self
 
-    def predict(self, dataloader, model_type="seq2seq", device="cpu", verbose=False):
+    def get_predictions(self, inputs):  # seq2seq ONLY
+        preds = self.model(inputs).detach().cpu()
+
+        # bs, seq_len = preds.shape
+
+        cal_preds = self.calibrator.predict(preds.flatten()).reshape(preds.shape)
+
+        return torch.from_numpy(cal_preds)
+
+    def predict_all(
+        self, dataloader, model_type="seq2seq", device="cpu", verbose=False
+    ):
         test_out_bank, _, test_labels_bank = collect_model_predictions_on_set(
             self.model,
             dataloader,
@@ -254,11 +286,11 @@ class ModelBeta:
 
 
 def calibrate_single_model(
-    core_model,
+    cpd_model,
     val_dataloader,
     cal_type="beta",
     parameters_beta="abm",
-    preprocessor=None,
+    # preprocessor=None,
     lr=1e-2,
     max_iter=50,
     verbose=True,
@@ -267,26 +299,28 @@ def calibrate_single_model(
 ):
     assert cal_type in ["temperature", "beta"], f"Unknown calibration type {cal_type}"
 
-    core_model.to(device)
-    if preprocessor:
-        preprocessor.to(device)
+    cpd_model.to(device)
+    # if preprocessor:
+    #     preprocessor.to(device)
 
     if cal_type == "temperature":
-        core_model.return_logits = True
+        cpd_model.model.return_logits = True
         scaled_model = ModelWithTemperature(
-            core_model,
-            preprocessor=preprocessor,
+            cpd_model,
+            # preprocessor=preprocessor,
             lr=lr,
             max_iter=max_iter,
+            device=device,
         )
         scaled_model.fit(val_dataloader, verbose=verbose)
-        core_model.return_logits = False
+        cpd_model.model.return_logits = False
 
     else:
         scaled_model = ModelBeta(
-            core_model,
+            cpd_model,
             parameters=parameters_beta,
-            preprocessor=preprocessor,
+            # preprocessor=preprocessor,
+            device=device,
         )
         scaled_model.fit(val_dataloader, verbose=verbose)
 
@@ -306,7 +340,7 @@ def calibrate_all_models_in_ensemble(
     ensemble_model,
     val_dataloader,
     cal_type,
-    preprocessor=None,
+    # preprocessor=None,
     lr=1e-2,
     max_iter=50,
     verbose=True,
@@ -315,16 +349,20 @@ def calibrate_all_models_in_ensemble(
     cal_models = []
     for cpd_model in ensemble_model.models_list:
         cal_model = calibrate_single_model(
-            cpd_model.model,
+            cpd_model,
             val_dataloader,
             cal_type,
-            preprocessor=preprocessor,
+            # preprocessor=preprocessor,
             lr=lr,
             max_iter=max_iter,
             verbose=verbose,
             device=device,
         )
         cal_models.append(cal_model)
+
+    ensemble_model.models_list = cal_models
+    ensemble_model.calibrated = True
+
     return cal_models
 
 
@@ -333,11 +371,13 @@ def manually_temperature_calibrate_all_models_in_ensemble(
 ):
     for cpd_model, T in zip(ensemble_model.models_list, temperature_list):
         cpd_model.model.temperature = T
+    ensemble_model.calibrated = True
 
 
 def temperature_uncalibrate_all_models_in_ensemble(ensemble_model):
     for cpd_model in ensemble_model.models_list:
         cpd_model.model.temperature = 1.0
+    ensemble_model.calibrated = False
 
 
 def plot_calibration_curves(
@@ -354,7 +394,7 @@ def plot_calibration_curves(
     plt.plot(x_ideal, x_ideal, linestyle="--", label="Ideally calibrated", c="black")
 
     for i, cal_model in enumerate(cal_models_list):
-        test_out_flat, test_labels_flat = cal_model.predict(
+        test_out_flat, test_labels_flat = cal_model.predict_all(
             test_dataloader, model_type=model_type, device=device, verbose=verbose
         )
 

@@ -485,6 +485,10 @@ def get_models_predictions(
         outs = model(inputs)
         uncertainties = None
 
+    elif model_type == "seq2seq_cal":
+        outs = model.get_predictions(inputs)
+        uncertainties = None
+
     elif model_type == "fake_ensemble":
         outs, uncertainties = inputs[0], inputs[1]
 

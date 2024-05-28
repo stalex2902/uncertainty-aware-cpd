@@ -382,7 +382,7 @@ def evaluate_cusum_ensemble_model(
             print(
                 f"Max F1 with margin {margin}: {np.round(_max_f1_margins_dict[margin], 4)}"
             )
-    return res_dict
+    return res_dict, best_th
 
 
 """
@@ -549,7 +549,7 @@ def all_cusums_evaluation_pipeline(
                     f"Evaluating CUSUM model with cusum_mode = {cusum_mode} and conditional = {conditional}"
                 )
 
-            res_dict = evaluate_cusum_ensemble_model(
+            res_dict, best_th = evaluate_cusum_ensemble_model(
                 ens_model=ens_model,
                 cusum_threshold_number=threshold_number,
                 output_dataloader=out_dataloader,
@@ -568,7 +568,7 @@ def all_cusums_evaluation_pipeline(
                 max_th_quant=max_th_quant,
             )
 
-            all_results[(cusum_mode, conditional)] = res_dict
+            all_results[(cusum_mode, conditional)] = (res_dict[best_th], best_th)
 
     return all_results
 
@@ -581,6 +581,7 @@ def evaluate_distance_ensemble_model(
     window_size: int,
     anchor_window_type: str = "start",
     distance: str = "wasserstein",
+    p: int = 1,
     kernel: Optional[str] = None,
     device: str = "cpu",
     verbose: bool = True,
@@ -598,6 +599,7 @@ def evaluate_distance_ensemble_model(
             window_size=window_size,
             anchor_window_type=anchor_window_type,
             distance=distance,
+            p=p,
         )
 
         metrics_local, (_, max_f1_margins_dict), _, _ = evaluation_pipeline(
@@ -677,6 +679,7 @@ def all_distances_evaluation_pipeline(
     ens_model,
     test_dataloader,
     distance="wasserstein",
+    p=1,
     device="cpu",
     verbose=True,
     window_size_list=[1, 2, 3],
@@ -716,17 +719,24 @@ def all_distances_evaluation_pipeline(
             window_size=window_size,
             anchor_window_type=anchor_window_type,
             distance=distance,
+            p=p,
             device="cpu",
             verbose=verbose,
         )
 
-        res_dict[(window_size, anchor_window_type)] = res[best_th]
+        res_dict[(window_size, anchor_window_type)] = (res[best_th], best_th)
 
     return res_dict
 
 
 def evaluate_all_models_in_ensemble(
-    ens_model, test_dataloader, threshold_number, margin_list=None, verbose=True
+    ens_model,
+    test_dataloader,
+    threshold_number,
+    device="cpu",
+    model_type="seq2seq",
+    margin_list=None,
+    verbose=True,
 ):
     threshold_list = np.linspace(-5, 5, threshold_number)
     threshold_list = 1 / (1 + np.exp(-threshold_list))
@@ -747,9 +757,9 @@ def evaluate_all_models_in_ensemble(
             model,
             test_dataloader,
             threshold_list,
-            device="cpu",
-            model_type="seq2seq",
-            verbose=False,
+            device=device,
+            model_type=model_type,
+            verbose=verbose,
             margin_list=margin_list,
         )
 

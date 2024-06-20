@@ -16,3 +16,5 @@ tqdm==4.51.0
 tsai==0.3.6
 torch-sgld==0.1.0
 comet-ml==3.37.1
+betacal==1.1.0
+POT==0.9.3

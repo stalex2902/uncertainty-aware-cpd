@@ -480,40 +480,40 @@ class CusumEnsembleCPDModel(ABC):
 
         return change_mask, normal_to_change_stat
 
-    def sample_cusum_trajectories(self, inputs):
-        if not self.ens_model.fitted:
-            print("Attention! The model is not fitted yet.")
+    # def sample_cusum_trajectories(self, inputs):
+    #     if not self.ens_model.fitted:
+    #         print("Attention! The model is not fitted yet.")
 
-        self.eval()
+    #     self.eval()
 
-        ensemble_preds = []
+    #     ensemble_preds = []
 
-        for model in self.ens_model.models_list:
-            ensemble_preds.append(model(inputs).squeeze())
+    #     for model in self.ens_model.models_list:
+    #         ensemble_preds.append(model(inputs).squeeze())
 
-        # shape is (n_models, batch_size, seq_len)
-        ensemble_preds = torch.stack(ensemble_preds)
+    #     # shape is (n_models, batch_size, seq_len)
+    #     ensemble_preds = torch.stack(ensemble_preds)
 
-        _, batch_size, seq_len = ensemble_preds.shape
+    #     _, batch_size, seq_len = ensemble_preds.shape
 
-        preds_std = torch.std(ensemble_preds, axis=0).reshape(batch_size, seq_len)
+    #     preds_std = torch.std(ensemble_preds, axis=0).reshape(batch_size, seq_len)
 
-        cusum_trajectories = []
-        change_masks = []
+    #     cusum_trajectories = []
+    #     change_masks = []
 
-        for preds_traj in ensemble_preds:
-            # use one_like tensor of std's, do not take them into account
-            # change_mask, normal_to_change_stat = self.cusum_detector_batch(preds_traj, torch.ones_like(preds_traj))
-            change_mask, normal_to_change_stat = self.cusum_detector(
-                preds_traj, preds_std
-            )
-            cusum_trajectories.append(normal_to_change_stat)
-            change_masks.append(change_mask)
+    #     for preds_traj in ensemble_preds:
+    #         # use one_like tensor of std's, do not take them into account
+    #         # change_mask, normal_to_change_stat = self.cusum_detector_batch(preds_traj, torch.ones_like(preds_traj))
+    #         change_mask, normal_to_change_stat = self.cusum_detector(
+    #             preds_traj, preds_std
+    #         )
+    #         cusum_trajectories.append(normal_to_change_stat)
+    #         change_masks.append(change_mask)
 
-        cusum_trajectories = torch.stack(cusum_trajectories)
-        change_masks = torch.stack(change_masks)
+    #     cusum_trajectories = torch.stack(cusum_trajectories)
+    #     change_masks = torch.stack(change_masks)
 
-        return change_masks, cusum_trajectories
+    #     return change_masks, cusum_trajectories
 
     def predict(
         self, inputs: torch.Tensor, scale: int = None, step: int = 1, alpha: float = 1.0
@@ -549,26 +549,26 @@ class CusumEnsembleCPDModel(ABC):
 
         return change_masks
 
-    def predict_cusum_trajectories(
-        self, inputs: torch.Tensor, q: float = 0.5
-    ) -> torch.Tensor:
-        """Make a prediction.
+    # def predict_cusum_trajectories(
+    #     self, inputs: torch.Tensor, q: float = 0.5
+    # ) -> torch.Tensor:
+    #     """Make a prediction.
 
-        :param inputs: input batch of sequences
+    #     :param inputs: input batch of sequences
 
-        :returns: torch.Tensor containing predictions of all the models
-        """
-        change_masks, _ = self.sample_cusum_trajectories(inputs)
-        cp_idxs_batch = torch.argmax(change_masks, dim=2).float()
-        cp_idxs_batch_aggr = torch.quantile(cp_idxs_batch, q, axis=0).round().int()
-        _, bs, seq_len = change_masks.shape
-        cusum_quantile_labels = torch.zeros(bs, seq_len).to(inputs.device)
+    #     :returns: torch.Tensor containing predictions of all the models
+    #     """
+    #     change_masks, _ = self.sample_cusum_trajectories(inputs)
+    #     cp_idxs_batch = torch.argmax(change_masks, dim=2).float()
+    #     cp_idxs_batch_aggr = torch.quantile(cp_idxs_batch, q, axis=0).round().int()
+    #     _, bs, seq_len = change_masks.shape
+    #     cusum_quantile_labels = torch.zeros(bs, seq_len).to(inputs.device)
 
-        for b in range(bs):
-            if cp_idxs_batch_aggr[b] > 0:
-                cusum_quantile_labels[b, cp_idxs_batch_aggr[b] :] = 1
+    #     for b in range(bs):
+    #         if cp_idxs_batch_aggr[b] > 0:
+    #             cusum_quantile_labels[b, cp_idxs_batch_aggr[b] :] = 1
 
-        return cusum_quantile_labels
+    #     return cusum_quantile_labels
 
     def fake_predict(self, series_batch: torch.Tensor, series_std_batch: torch.Tensor):
         """In case of pre-computed model outputs."""

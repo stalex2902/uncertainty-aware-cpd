@@ -34,12 +34,12 @@ predictions:
 early_stopping:
   monitor: train_loss_epoch
   min_delta: 0.0001
-  patience: 5
+  patience: 10 # 5
 
 cusum:
   normal_sigma: null
   cp_sigma: null
-  half_window: null
+  half_window: 15
 
 distance:
   window_size_list: [3, 5, 10]

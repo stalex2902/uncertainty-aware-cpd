@@ -1,13 +1,15 @@
 import argparse
 import warnings
 
-from scripts.evaluate_ensemble import evaluate_all_ensembles
+from scripts.evaluate_wasserstein_thresholds_range import (
+    evaluate_wasserstein_thresholds_range_all_ensembles,
+)
 
 warnings.filterwarnings("ignore")
 
 
 def get_parser():
-    """Parse command line arguments for main.py"""
+    """Parse command line arguments for run.py"""
 
     parser = argparse.ArgumentParser(description="Evaluate ensemble")
     parser.add_argument(
@@ -22,7 +24,6 @@ def get_parser():
             "human_activity",
             "explosion",
             "road_accidents",
-            "yahoo",
         ],
     )
     parser.add_argument(
@@ -41,13 +42,6 @@ def get_parser():
     )
 
     parser.add_argument(
-        "--is_ensemble",
-        type=lambda x: (str(x).lower() == "true"),
-        default=True,
-        help="If true, evaluate ensemble, else Bayes model.",
-    )
-
-    parser.add_argument(
         "--n_models", type=int, default=10, help="Number of models in ensemble"
     )
     parser.add_argument(
@@ -58,17 +52,14 @@ def get_parser():
         help="If True, calibrate the models using Beta calibration",
     )
 
-    parser.add_argument(
-        "-tn", "--threshold_number", type=int, default=300, help="threshold number"
-    )
-
-    parser.add_argument(
-        "--eval_comp",
-        "--evaluation_components",
-        type=list[str],
-        default=["mean", "distances", "cusums"],
-        help="What types of procedures to evaluate",
-    )
+    # parser.add_argument(
+    #     "-tn_list",
+    #     "--threshold_number_list",
+    #     nargs="*",
+    #     type=int,
+    #     # required=True,
+    #     help="threshold number list",
+    # )
 
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
 
@@ -100,24 +91,20 @@ def main(args) -> None:
         experiments_name,
         model_type,
         loss_type,
-        is_ensemble,
         n_models,
         calibrate,
-        threshold_number,
-        evaluation_components,
+        # threshold_number_list,
         seed,
         verbose,
         save_df,
     ) = args.values()
-    _ = evaluate_all_ensembles(
+    _ = evaluate_wasserstein_thresholds_range_all_ensembles(
         experiments_name=experiments_name,
         model_type=model_type,
         loss_type=loss_type,
-        is_ensemble=is_ensemble,
         n_models=n_models,
         calibrate=calibrate,
-        threshold_number=threshold_number,
-        evaluation_components=evaluation_components,
+        # threshold_number_list,
         seed=seed,
         verbose=verbose,
         save_df=save_df,

@@ -1,4 +1,5 @@
 import itertools
+import math
 from datetime import datetime
 from typing import List, Optional, Tuple
 
@@ -589,7 +590,7 @@ def evaluate_distance_ensemble_model(
 ):
     res_dict = {}
     best_th = None
-    best_f1_global = 0
+    best_f1_global = -math.inf
 
     for th in tqdm(threshold_list, disable=not verbose):
         model = DistanceEnsembleCPDModel(
@@ -678,6 +679,7 @@ def evaluate_distance_ensemble_model(
 def all_distances_evaluation_pipeline(
     ens_model,
     test_dataloader,
+    precomputed=False,
     distance="wasserstein",
     p=1,
     device="cpu",
@@ -687,19 +689,20 @@ def all_distances_evaluation_pipeline(
     anchor_window_type_list=["start", "prev"],
     threshold_list=np.linspace(0, 1, 50),
 ):
-    test_out_bank, _, test_labels_bank = collect_model_predictions_on_set(
-        ens_model,
-        test_dataloader,
-        model_type="ensemble_all_models",
-        device=device,
-        verbose=verbose,
-    )
+    if not precomputed:
+        test_out_bank, _, test_labels_bank = collect_model_predictions_on_set(
+            ens_model,
+            test_dataloader,
+            model_type="ensemble_all_models",
+            device=device,
+            verbose=verbose,
+        )
 
-    out_dataset = AllModelsOutputDataset(test_out_bank, test_labels_bank)
+        out_dataset = AllModelsOutputDataset(test_out_bank, test_labels_bank)
 
-    out_dataloader = DataLoader(
-        out_dataset, batch_size=128, shuffle=False
-    )  # batch size does not matter
+        test_dataloader = DataLoader(
+            out_dataset, batch_size=128, shuffle=False
+        )  # batch size does not matter
 
     res_dict = {}
 
@@ -714,7 +717,7 @@ def all_distances_evaluation_pipeline(
         res, best_th = evaluate_distance_ensemble_model(
             ens_model=ens_model,
             threshold_list=threshold_list,
-            output_dataloader=out_dataloader,
+            output_dataloader=test_dataloader,
             margin_list=margin_list,
             window_size=window_size,
             anchor_window_type=anchor_window_type,
@@ -735,6 +738,9 @@ def evaluate_all_models_in_ensemble(
     threshold_number,
     device="cpu",
     model_type="seq2seq",
+    scale=None,
+    step=1,
+    alpha=1.0,
     margin_list=None,
     verbose=True,
 ):
@@ -761,6 +767,9 @@ def evaluate_all_models_in_ensemble(
             model_type=model_type,
             verbose=verbose,
             margin_list=margin_list,
+            scale=scale,
+            step=step,
+            alpha=alpha,
         )
 
         _, time_fa, delay, audc, _, f1, cover, _, max_cover = metrics

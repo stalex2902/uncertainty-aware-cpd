@@ -276,6 +276,48 @@ def get_tscp_output_padded(
     return pred_out
 
 
+def get_tscp_output_scaled(
+    tscp_model: nn.Module,
+    batch: torch.Tensor,
+    window_1: int,
+    window_2: Optional[int] = None,
+    scale: float = 1.0,
+) -> List[torch.Tensor]:
+    """Get TS-CP2 predictions scaled to [0, 1].
+
+    :param tscp_model: pre-trained TS-CP2 model
+    :param batch: input data
+    :param window_1: "past" subsequence size
+    :param window_2: "future" subsequence size (default None), if None set equal to window_1
+    :param scales: scale factor
+    :return: predicted change probability
+    """
+    device = tscp_model.device
+    batch = batch.to(device)
+
+    if len(batch.shape) <= 4:
+        seq_len = batch.shape[1]
+    else:
+        seq_len = batch.shape[2]
+
+    batch_history_slices, batch_future_slices = history_future_separation_test(
+        batch, window_1, window_2
+    )
+
+    pred_out = []
+    for i in range(len(batch_history_slices)):
+        zeros = torch.ones(1, seq_len)
+        curr_history = tscp_model(batch_history_slices[i])
+        curr_future = tscp_model(batch_future_slices[i])
+        rep_sim = _cosine_simililarity_dim1(curr_history, curr_future).data
+        zeros[:, window_1 + window_2 - 1 :] = rep_sim
+        pred_out.append(zeros)
+
+    pred_out = torch.cat(pred_out).to(batch.device)
+    pred_out = torch.sigmoid(-pred_out * scale)
+    return pred_out
+
+
 '''
 def post_process_tscp_output(outputs: torch.Tensor, scale: float = 1., alpha: float = 1.) -> torch.Tensor:
     """

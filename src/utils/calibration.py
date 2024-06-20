@@ -4,6 +4,7 @@
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import torch
 from betacal import BetaCalibration
 from sklearn.calibration import calibration_curve
@@ -13,6 +14,26 @@ from src.metrics.metrics_utils import (
 from torch import nn, optim
 from torch.nn import functional as F
 from tqdm import tqdm
+
+
+def ece(y_test, preds, strategy="uniform"):
+    df = pd.DataFrame({"target": y_test, "proba": preds, "bin": np.nan})
+
+    if strategy == "uniform":
+        lim_inf = np.linspace(0, 0.9, 10)
+        for idx, lim in enumerate(lim_inf):
+            df.loc[df["proba"] >= lim, "bin"] = idx
+
+    elif strategy == "quantile":
+        pass
+
+    df_bin_groups = pd.concat(
+        [df.groupby("bin").mean(), df["bin"].value_counts()], axis=1
+    )
+    df_bin_groups["ece"] = (df_bin_groups["target"] - df_bin_groups["proba"]).abs() * (
+        df_bin_groups["bin"] / df.shape[0]
+    )
+    return df_bin_groups["ece"].sum()
 
 
 class _ECELoss(nn.Module):
@@ -381,25 +402,60 @@ def temperature_uncalibrate_all_models_in_ensemble(ensemble_model):
 
 
 def plot_calibration_curves(
-    cal_models_list,
+    ens_model,
     test_dataloader,
     model_type="seq2seq",
+    calibrated=True,
     device="cpu",
+    n_bins=10,
+    evaluate=False,
+    fontsize=12,
     title=None,
     verbose=False,
+    savename=None,
+    model_num=None,
 ):
-    x_ideal = np.linspace(0, 1, 20)
+    if not model_num:
+        model_num = len(ens_model.models_list)
 
-    plt.figure(figsize=(10, 8))
-    plt.plot(x_ideal, x_ideal, linestyle="--", label="Ideally calibrated", c="black")
+    x_ideal = np.linspace(0, 1, n_bins)
 
-    for i, cal_model in enumerate(cal_models_list):
-        test_out_flat, test_labels_flat = cal_model.predict_all(
-            test_dataloader, model_type=model_type, device=device, verbose=verbose
-        )
+    plt.figure(figsize=(8, 6))
+    plt.plot(
+        x_ideal,
+        x_ideal,
+        linestyle="--",
+        label="Ideal",
+        c="black",
+        linewidth=2,
+    )
 
+    if evaluate:
+        ece_list = []
+
+    for i, model in enumerate(ens_model.models_list[:model_num]):
+        if calibrated:
+            test_out_flat, test_labels_flat = model.predict_all(
+                test_dataloader, model_type=model_type, device=device, verbose=verbose
+            )
+        else:
+            test_out_bank, _, test_labels_bank = collect_model_predictions_on_set(
+                model,
+                test_dataloader,
+                model_type=model_type,
+                device=device,
+                verbose=verbose,
+            )
+            test_out_flat = torch.vstack(test_out_bank).flatten()
+            test_labels_flat = torch.vstack(test_labels_bank).flatten()
+
+        if evaluate:
+            try:
+                ece_list.append(ece(test_labels_flat.numpy(), test_out_flat.numpy()))
+            except AttributeError:
+                ece_list.append(ece(test_labels_flat, test_out_flat))
         prob_true, prob_pred = calibration_curve(
-            test_labels_flat, test_out_flat, n_bins=10
+            test_labels_flat, test_out_flat, n_bins=n_bins
         )
 
         plt.plot(
@@ -409,13 +465,25 @@ def plot_calibration_curves(
             marker="o",
             markersize=4,
             linewidth=1,
-            label=f"Model num {i}",
+            label=f"Model {i}",
+        )
+    if evaluate:
+        bbox = dict(boxstyle="round", fc="blanchedalmond", ec="orange", alpha=0.5)
+        plt.text(
+            x=0.49,
+            y=0.00,
+            s="Calibration Error = {:.4f}".format(np.round(np.mean(ece_list), 4)),  # noqa: F523
+            fontsize=fontsize,
+            bbox=bbox,
         )
     if title:
-        plt.title(title, fontsize=14)
-    plt.xlabel("Predicted probability", fontsize=12)
-    plt.ylabel("Fraction of positives", fontsize=12)
-    plt.xticks(fontsize=12)
-    plt.yticks(fontsize=12)
-    plt.legend(fontsize=12)
+        plt.title(title, fontsize=fontsize + 2)
+    plt.xlabel("Predicted probability", fontsize=fontsize)
+    plt.ylabel("Fraction of positives", fontsize=fontsize)
+    plt.xticks(fontsize=fontsize)
+    plt.yticks(fontsize=fontsize)
+    plt.legend(fontsize=fontsize - 1)
+    plt.tight_layout()
+    if savename:
+        plt.savefig(f"pictures/calibration/curves/{savename}.pdf", dpi=300)
     plt.show()

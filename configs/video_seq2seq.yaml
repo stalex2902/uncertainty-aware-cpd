@@ -19,3 +19,15 @@ early_stopping:
   monitor: "val_loss"
   min_delta: 0
   patience: 10
+
+cusum:
+  normal_sigma: null
+  cp_sigma: null
+  half_window: 1
+
+distance:
+  window_size_list: [1, 2, 3]
+  anchor_window_type_list: ["start", "prev"]
+
+evaluation:
+  margin_list: [1, 2, 4]

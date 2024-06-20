@@ -430,16 +430,21 @@ def get_models_predictions(
         uncertainties = None
 
     elif model_type == "tscp":
-        # outs = tscp.get_tscp_output_scaled(model, inputs, model.window_1, model.window_2, scale=scale, step=step)
+        # outs = tscp.get_tscp_output_scaled(
+        #     model, inputs, model.window_1, model.window_2, scale=scale
+        # )
+
         # outs = tscp.get_tscp_output_scaled_padded(
         #    model, inputs, model.window_1, model.window_2, scale=scale, step=step, alpha=alpha
         # )
         # outs = tscp.get_tscp_output_padded(model, inputs, model.window_1, model.window_2, step=step)
 
+        # FINAL version!
         outs = tscp.get_tscp_output(
             model, inputs, model.window_1, model.window_2, step=step
         )
         outs = tscp.post_process_tscp_output(outs, scale=scale, alpha=alpha)
+
         uncertainties = None
 
     elif model_type == "kl_cpd":
@@ -483,6 +488,10 @@ def get_models_predictions(
 
     elif model_type == "seq2seq":
         outs = model(inputs)
+        uncertainties = None
+
+    elif model_type == "seq2seq_cal":
+        outs = model.get_predictions(inputs)
         uncertainties = None
 
     elif model_type == "fake_ensemble":
@@ -544,12 +553,13 @@ def collect_model_predictions_on_set(
                 test_out = test_out.squeeze(2)
                 test_uncertainties = test_uncertainties.squeeze(2)
             except:  # noqa: E722
-                try:
-                    test_out = test_out.squeeze(1)
-                    test_uncertainties = test_uncertainties.squeeze(1)
-                except:  # noqa: E722
-                    test_out = test_out
-                    test_uncertainties = test_uncertainties
+                # try:
+                #     test_out = test_out.squeeze(1)
+                #     test_uncertainties = test_uncertainties.squeeze(1)
+                # except:  # noqa: E722
+                #     test_out = test_out
+                #     test_uncertainties = test_uncertainties
+                pass
 
             # in case of different sizes, crop start of labels sequence (for TS-CP)
             crop_size = test_labels.shape[-1] - test_out.shape[-1]
@@ -684,6 +694,8 @@ def write_metrics_to_file(
             max_cover,
         ),
         (best_th_f1_margin_dict, max_f1_margin_dict),
+        _,
+        _,
     ) = metrics
 
     with open(filename, "a") as f:

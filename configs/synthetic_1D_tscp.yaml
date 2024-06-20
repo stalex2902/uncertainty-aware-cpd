@@ -29,8 +29,21 @@ loss:
 predictions:
   scale: 1.
   step: 1
+  alpha: 1.
 
 early_stopping:
   monitor: train_loss_epoch
   min_delta: 0.0001
   patience: 5
+
+cusum:
+  normal_sigma: null
+  cp_sigma: null
+  half_window: 2
+
+distance:
+  window_size_list: [5, 10, 20]
+  anchor_window_type_list: ["start", "prev"]
+
+evaluation:
+  margin_list: [5, 10, 20]

@@ -3,6 +3,7 @@ model:
   input_size: 1
   n_layers: 1
   drop_prob: 0.5
+  layer_norm: false
 
 learning:
   batch_size: 64
@@ -17,3 +18,15 @@ early_stopping:
   monitor: "val_loss"
   min_delta: 0
   patience: 10
+
+cusum:
+  normal_sigma: 0.0262
+  cp_sigma: 0.0838
+  half_window: 2
+
+distance:
+  window_size_list: [5, 10, 20]
+  anchor_window_type_list: ["start", "prev"]
+
+evaluation:
+  margin_list: [5, 10, 20]

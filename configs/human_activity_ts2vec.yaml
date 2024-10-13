@@ -1,26 +1,15 @@
 model:
-  c_in: 28
-  nb_filters: 64
-  kernel_size: 5
-  nb_stacks: 2
-  dilations: [1, 2, 4, 8]
-  use_skip_connections: True
-  use_batch_norm: False
-  use_layer_norm: False
-  use_weight_norm: False
-  dropout_rate: 0.
-  seq_len: 4
-  n_steps: 8
+# TODO
   code_size: 4
   window: 4
   window_1: 4
   window_2: 4
   
 learning:
-  batch_size: 8
-  lr: 0.001
-  epochs: 200
-  decay_steps: 1000
+  batch_size: 
+  lr: 
+  epochs: 40
+  decay_steps: 
   grad_clip: 0. # no clipping
   accelerator: cuda
   devices: 1
@@ -50,4 +39,4 @@ distance:
 evaluation:
   margin_list: [1, 2, 4]
 
-model_type: tscp
+model_type: ts2vec

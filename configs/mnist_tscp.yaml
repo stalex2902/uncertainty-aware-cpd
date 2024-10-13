@@ -34,3 +34,5 @@ early_stopping:
   monitor: train_loss_epoch
   min_delta: 0.0001
   patience: 5
+
+model_type: tscp

@@ -26,6 +26,7 @@ def visualize_predictions(
     :param n_pics: number of pictures to plot
     :param save: if True, save pictures to the 'pictures' folder
     """
+    print("device:", device)
     model.to(device)
     sequences_batch = sequences_batch.to(device)
     labels_batch = labels_batch.cpu()

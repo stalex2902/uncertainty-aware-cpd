@@ -28,7 +28,14 @@ def evaluate_ensemble(
     calibrate: bool = False,
     ensemble_num: int = 1,
     threshold_number: int = 300,
-    evaluation_components: List[str] = ["mean", "distances", "cusums"],
+    evaluation_components: List[str] = [
+        "mean",
+        "min",
+        "max",
+        "median",
+        "distances",
+        "cusums",
+    ],
     seed: int = 42,
     kl_coeff: float = 0.2,
     prior_mu: float = 0.0,
@@ -56,7 +63,7 @@ def evaluate_ensemble(
         max_th_quant = 0.9
     else:
         path_to_config = "configs/" + "video" + "_" + model_type + ".yaml"
-        device = "cuda"
+        device = "cuda:0"
         min_th_quant = 0.0
         max_th_quant = 1.0
 
@@ -79,9 +86,14 @@ def evaluate_ensemble(
 
         if experiments_name == "synthetic_1D":
             if is_ensemble:
-                path_to_models_folder = (
-                    f"saved_models/bce/synthetic_1D/full_sample/ens_{ensemble_num}"
-                )
+                if loss_type == "bce":
+                    path_to_models_folder = (
+                        f"saved_models/bce/synthetic_1D/full_sample/ens_{ensemble_num}"
+                    )
+                elif loss_type == "indid":
+                    path_to_models_folder = (
+                        f"saved_models/indid/synthetic_1D/ens_{ensemble_num}"
+                    )
             else:
                 path_to_models_folder = (
                     f"saved_models/total_bayes/synthetic_1D/ens_{ensemble_num}"
@@ -89,21 +101,35 @@ def evaluate_ensemble(
 
         elif experiments_name == "human_activity":
             if is_ensemble:
-                path_to_models_folder = (
-                    f"saved_models/bce/human_activity/full_sample/ens_{ensemble_num}"
-                )
+                if loss_type == "bce":
+                    path_to_models_folder = f"saved_models/bce/human_activity/full_sample/ens_{ensemble_num}"
+                elif loss_type == "indid":
+                    path_to_models_folder = (
+                        f"saved_models/indid/human_activity/ens_{ensemble_num}"
+                    )
             else:
                 path_to_models_folder = (
                     f"saved_models/total_bayes/human_activity/ens_{ensemble_num}"
                 )
+
         elif experiments_name == "explosion":
-            path_to_models_folder = f"saved_models/bce/explosion/layer_norm/train_anomaly_num_155/ens_{ensemble_num}"
+            if loss_type == "bce":
+                path_to_models_folder = f"saved_models/bce/explosion/layer_norm/train_anomaly_num_155/ens_{ensemble_num}"
+                args_config["model"]["ln_type"] = "after"
+            elif loss_type == "indid":
+                path_to_models_folder = f"saved_models/indid/explosion/layer_norm_before/ens_{ensemble_num}"  # !!!!!!!!!!!!1
+                args_config["model"]["ln_type"] = "before"
 
         elif experiments_name == "road_accidents":
-            path_to_models_folder = (
-                f"saved_models/bce/road_accidents/layer_norm/ens_{ensemble_num}"
-            )
+            if loss_type == "bce":
+                path_to_models_folder = (
+                    f"saved_models/bce/road_accidents/layer_norm/ens_{ensemble_num}"
+                )
+                args_config["model"]["ln_type"] = "after"
 
+            elif loss_type == "indid":
+                path_to_models_folder = f"saved_models/indid/road_accidents/layer_norm_before/ens_{ensemble_num}"
+                args_config["model"]["ln_type"] = "before"
         else:
             raise ValueError(f"Wrong experiments name {experiments_name}")
 
@@ -192,6 +218,8 @@ def evaluate_ensemble(
             device=device,
         )
 
+    ens_model.eval()
+
     columns = [
         "Model name",
         "AUDC",
@@ -216,7 +244,7 @@ def evaluate_ensemble(
 
     if "mean" in evaluation_components:
         if verbose:
-            print("Evaluating pure ensemble model:")
+            print("Evaluating mean ensemble model:")
 
         res_mean = evaluation_pipeline(
             ens_model,
@@ -236,6 +264,117 @@ def evaluate_ensemble(
         results_df = results_df.append(
             {
                 "Model name": f"Ens num {ensemble_num}, cal = {calibrate}, Mean",
+                "AUDC": auc,
+                "Time to FA": time_to_FA,
+                "DD": delay,
+                "Max F1": f1,
+                "Cover": cover,
+                "Max Cover": max_cover,
+                "Max F1, m1": f1_m1,
+                "Max F1, m2": f1_m2,
+                "Max F1, m3": f1_m3,
+                "params": f"th = {best_th_f1}",
+            },
+            ignore_index=True,
+        )
+
+    if "min" in evaluation_components:
+        if verbose:
+            print("Evaluating min ensemble model:")
+
+        res_mean = evaluation_pipeline(
+            ens_model,
+            test_dataloader,
+            threshold_list_ens,
+            device=device,
+            model_type="ensemble_quantile",
+            q=0.0,
+            verbose=verbose,
+            margin_list=args_config["evaluation"]["margin_list"],
+        )
+
+        # extract metrics for min ensemble
+        metrics, (_, max_f1_margins_dic), _, _ = res_mean
+        best_th_f1, time_to_FA, delay, auc, _, f1, cover, _, max_cover = metrics
+        f1_m1, f1_m2, f1_m3 = max_f1_margins_dic.values()
+
+        results_df = results_df.append(
+            {
+                "Model name": f"Ens num {ensemble_num}, cal = {calibrate}, Min",
+                "AUDC": auc,
+                "Time to FA": time_to_FA,
+                "DD": delay,
+                "Max F1": f1,
+                "Cover": cover,
+                "Max Cover": max_cover,
+                "Max F1, m1": f1_m1,
+                "Max F1, m2": f1_m2,
+                "Max F1, m3": f1_m3,
+                "params": f"th = {best_th_f1}",
+            },
+            ignore_index=True,
+        )
+
+    if "max" in evaluation_components:
+        if verbose:
+            print("Evaluating max ensemble model:")
+
+        res_mean = evaluation_pipeline(
+            ens_model,
+            test_dataloader,
+            threshold_list_ens,
+            device=device,
+            model_type="ensemble_quantile",
+            q=1.0,
+            verbose=verbose,
+            margin_list=args_config["evaluation"]["margin_list"],
+        )
+
+        # extract metrics for min ensemble
+        metrics, (_, max_f1_margins_dic), _, _ = res_mean
+        best_th_f1, time_to_FA, delay, auc, _, f1, cover, _, max_cover = metrics
+        f1_m1, f1_m2, f1_m3 = max_f1_margins_dic.values()
+
+        results_df = results_df.append(
+            {
+                "Model name": f"Ens num {ensemble_num}, cal = {calibrate}, Max",
+                "AUDC": auc,
+                "Time to FA": time_to_FA,
+                "DD": delay,
+                "Max F1": f1,
+                "Cover": cover,
+                "Max Cover": max_cover,
+                "Max F1, m1": f1_m1,
+                "Max F1, m2": f1_m2,
+                "Max F1, m3": f1_m3,
+                "params": f"th = {best_th_f1}",
+            },
+            ignore_index=True,
+        )
+
+    if "median" in evaluation_components:
+        if verbose:
+            print("Evaluating median ensemble model:")
+
+        res_mean = evaluation_pipeline(
+            ens_model,
+            test_dataloader,
+            threshold_list_ens,
+            device=device,
+            model_type="ensemble_quantile",
+            q=0.5,
+            verbose=verbose,
+            margin_list=args_config["evaluation"]["margin_list"],
+        )
+
+        # extract metrics for min ensemble
+        metrics, (_, max_f1_margins_dic), _, _ = res_mean
+        best_th_f1, time_to_FA, delay, auc, _, f1, cover, _, max_cover = metrics
+        f1_m1, f1_m2, f1_m3 = max_f1_margins_dic.values()
+
+        results_df = results_df.append(
+            {
+                "Model name": f"Ens num {ensemble_num}, cal = {calibrate}, Median",
                 "AUDC": auc,
                 "Time to FA": time_to_FA,
                 "DD": delay,
@@ -409,13 +548,22 @@ def evaluate_ensemble(
 
         if model_type == "seq2seq":
             model_name = model_type + "_" + loss_type
+            if loss_type == "indid" and experiments_name in [
+                "explosion",
+                "road_accidents",
+            ]:
+                model_name += "_ln_before"
         else:
             model_name = model_type
 
         if calibrate:
             model_name += "_calibrated"
 
-        save_path = f"results/final_results/{experiments_name}/{model_name}_ens_num_{ensemble_num}_{experiments_name}.csv"
+        if model_type == "seq2seq":
+            save_path = f"results/final_results/{experiments_name}/{loss_type}/{model_name}_ens_num_{ensemble_num}_{experiments_name}.csv"
+        else:
+            save_path = f"results/final_results/{experiments_name}/{model_type}/{model_name}_ens_num_{ensemble_num}_{experiments_name}.csv"
+
         results_df.to_csv(save_path)
 
     return results_df
@@ -430,7 +578,14 @@ def evaluate_all_ensembles(
     calibrate: bool = False,
     ensemble_num_list: List[int] = [1, 2, 3],
     threshold_number: int = 300,
-    evaluation_components: List[str] = ["mean", "distances", "cusums"],
+    evaluation_components: List[str] = [
+        "mean",
+        "min",
+        "max",
+        "median",
+        "distances",
+        "cusums",
+    ],
     seed: int = 42,
     verbose: bool = True,
     save_df: bool = False,
@@ -459,6 +614,11 @@ def evaluate_all_ensembles(
 
         if model_type == "seq2seq":
             model_name = model_type + "_" + loss_type
+            if loss_type == "indid" and experiments_name in [
+                "explosion",
+                "road_accidents",
+            ]:
+                model_name += "_ln_before"
         else:
             model_name = model_type
 
@@ -466,9 +626,15 @@ def evaluate_all_ensembles(
             model_name += "_calibrated"
 
         if is_ensemble:
-            save_path = f"results/final_results/{experiments_name}/{model_name}_all_ensembles_{experiments_name}.csv"
+            if model_type == "seq2seq":
+                save_path = f"results/final_results/{experiments_name}/{loss_type}/{model_name}_all_ensembles_{experiments_name}.csv"
+            else:
+                save_path = f"results/final_results/{experiments_name}/{model_type}/{model_name}_all_ensembles_{experiments_name}.csv"
         else:
-            save_path = f"results/final_results/{experiments_name}/{model_name}_all_bayes_{experiments_name}.csv"
+            if model_type == "seq2seq":
+                save_path = f"results/final_results/{experiments_name}/{loss_type}/{model_name}_all_bayes_{experiments_name}.csv"
+            else:
+                save_path = f"results/final_results/{experiments_name}/{model_type}/{model_name}_all_bayes_{experiments_name}.csv"
 
         results_df.to_csv(save_path)
 

@@ -84,6 +84,8 @@ class CPDModel(pl.LightningModule):
         """
         super().__init__()
 
+        self.args = args
+
         self.experiments_name = args["experiments_name"]
         self.model = model
 

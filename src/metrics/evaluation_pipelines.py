@@ -583,7 +583,7 @@ def evaluate_distance_ensemble_model(
     anchor_window_type: str = "start",
     distance: str = "wasserstein",
     p: int = 1,
-    kernel: Optional[str] = None,
+    kernel: Optional[str] = "rbf",
     device: str = "cpu",
     verbose: bool = True,
     write_metrics_filename: str = None,

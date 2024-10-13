@@ -10,7 +10,7 @@ learning:
   lr: 0.001
   epochs: 200
   grad_clip: 0.0
-  
+
 loss:
   T: 5
 
@@ -30,3 +30,5 @@ distance:
 
 evaluation:
   margin_list: [1, 2, 4]
+
+model_type: seq2seq

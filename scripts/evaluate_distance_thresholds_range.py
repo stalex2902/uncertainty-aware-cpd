@@ -2,9 +2,11 @@ from typing import List
 
 import numpy as np
 import pandas as pd
+import torch
 import yaml
 from sklearn.model_selection import train_test_split
 from src.datasets.datasets import AllModelsOutputDataset, CPDDatasets
+from src.ensembles.distances import MMD_batch
 from src.ensembles.ensembles import EnsembleCPDModel
 from src.metrics.evaluation_pipelines import all_distances_evaluation_pipeline
 from src.metrics.metrics_utils import collect_model_predictions_on_set
@@ -13,13 +15,14 @@ from src.utils.fix_seeds import fix_seeds
 from torch.utils.data import DataLoader
 
 
-def evaluate_wasserstein_thresholds_range(
+def evaluate_distance_thresholds_range(
     experiments_name: str,
     model_type: str,
     loss_type: str = None,
     n_models: int = 10,
     calibrate: bool = False,
     ensemble_num: int = 1,
+    distance: str = "wasserstein_1d",
     threshold_number_list: List[int] = [1, 3, 5, 7, 9, 15, 20, 30, 50, 100, 200],
     seed: int = 42,
     verbose: bool = True,
@@ -50,23 +53,42 @@ def evaluate_wasserstein_thresholds_range(
         else:
             raise ValueError(f"Wrong loss type {loss_type}")
 
-        scale, step, alpha = None, 1, 1.0
+        # scale, step, alpha = None, 1, 1.0
 
         if experiments_name == "synthetic_1D":
             pass
 
         elif experiments_name == "human_activity":
-            path_to_models_folder = (
-                f"saved_models/bce/human_activity/full_sample/ens_{ensemble_num}"
-            )
+            if loss_type == "bce":
+                path_to_models_folder = (
+                    f"saved_models/bce/human_activity/full_sample/ens_{ensemble_num}"
+                )
+            elif loss_type == "indid":
+                path_to_models_folder = (
+                    f"saved_models/indid/human_activity/ens_{ensemble_num}"
+                )
 
         elif experiments_name == "explosion":
-            path_to_models_folder = f"saved_models/bce/explosion/layer_norm/train_anomaly_num_155/ens_{ensemble_num}"
+            if loss_type == "bce":
+                path_to_models_folder = f"saved_models/bce/explosion/layer_norm/train_anomaly_num_155/ens_{ensemble_num}"
+                args_config["model"]["ln_type"] = "after"
+            elif loss_type == "indid":
+                path_to_models_folder = (
+                    f"saved_models/indid/explosion/ens_{ensemble_num}"
+                )
+                args_config["model"]["ln_type"] = "before"
 
         elif experiments_name == "road_accidents":
-            path_to_models_folder = (
-                f"saved_models/bce/road_accidents/layer_norm/ens_{ensemble_num}"
-            )
+            if loss_type == "bce":
+                path_to_models_folder = (
+                    f"saved_models/bce/road_accidents/layer_norm/ens_{ensemble_num}"
+                )
+                args_config["model"]["ln_type"] = "after"
+            elif loss_type == "indid":
+                path_to_models_folder = (
+                    f"saved_models/indid/road_accidents/ens_{ensemble_num}"
+                )
+                args_config["model"]["ln_type"] = "before"
 
         else:
             raise ValueError(f"Wrong experiments name {experiments_name}")
@@ -153,26 +175,43 @@ def evaluate_wasserstein_thresholds_range(
         print("Evaluating dustance-based approach:")
 
     for threshold_number in threshold_number_list:
-        if threshold_number == 1:
-            threshold_list_dist = [0.5]
-        elif threshold_number == 3:
-            threshold_list_dist = [0.25, 0.50, 0.75]
-        elif threshold_number == 5:
-            threshold_list_dist = [0.17, 0.33, 0.50, 0.67, 0.84]
-        elif threshold_number == 7:
-            threshold_list_dist = [0.125, 0.250, 0.375, 0.500, 0.625, 0.750, 0.875]
-        elif threshold_number >= 9:
-            threshold_list_dist = np.linspace(-0.01, 1.01, threshold_number + 2)[
-                1:-1
-            ]  # avoid 0.0 and 1.0 thresholds
-        else:
-            raise ValueError(f"Unsupported th number {threshold_number}")
+        if distance.startswith("wasserstein"):
+            if threshold_number == 1:
+                threshold_list_dist = [0.5]
+            elif threshold_number == 3:
+                threshold_list_dist = [0.25, 0.50, 0.75]
+            elif threshold_number == 5:
+                threshold_list_dist = [0.17, 0.33, 0.50, 0.67, 0.84]
+            elif threshold_number == 7:
+                threshold_list_dist = [0.125, 0.250, 0.375, 0.500, 0.625, 0.750, 0.875]
+            elif threshold_number >= 9:
+                threshold_list_dist = np.linspace(-0.01, 1.01, threshold_number + 2)[
+                    1:-1
+                ]  # avoid 0.0 and 1.0 thresholds
+            else:
+                raise ValueError(f"Unsupported th number {threshold_number}")
+
+        elif distance == "mmd":
+            outs_batch, _ = next(iter(test_dataloader))
+            outs_batch = outs_batch.permute(0, 2, 1)  # (bs, seq_len, ens_size)
+            ws = 2
+            history_sample, future_sample = (
+                outs_batch[:, :ws, :],
+                outs_batch[:, -ws:, :],
+            )
+            mmd_sample = MMD_batch(history_sample, future_sample)
+            min_value = torch.quantile(mmd_sample, 0.05).item()
+            max_value = torch.quantile(mmd_sample, 0.95).item()
+
+            threshold_list_dist = np.linspace(min_value, max_value, threshold_number)
+
+            # threshold_list_dist = np.linspace(min_value, max_value, threshold_number + 2)[1:-1]
 
         res_dist = all_distances_evaluation_pipeline(
             ens_model,
             test_dataloader,
             precomputed=True,
-            distance="wasserstein_1d",
+            distance=distance,
             device=device,
             verbose=verbose,
             window_size_list=[1, 2, 3],
@@ -182,15 +221,10 @@ def evaluate_wasserstein_thresholds_range(
         )
 
         # extract metrics for distances
-        best_f1_start = 0
-        best_res_start = None
-        best_ws_start = None
-        best_th_start = None
-
-        best_f1_prev = 0
-        best_res_prev = None
-        best_ws_prev = None
-        best_th_prev = None
+        best_f1_start, best_f1_prev = 0, 0
+        best_res_start, best_res_prev = None, None
+        best_ws_start, best_ws_prev = None, None
+        best_th_start, best_th_prev = None, None
 
         for (ws, anchor_type), (res, best_th) in res_dist.items():
             f1 = res[3]
@@ -233,7 +267,7 @@ def evaluate_wasserstein_thresholds_range(
 
         results_df = results_df.append(
             {
-                "Model name": f"Ens num {ensemble_num}, cal = {calibrate}, Wasserstein start, th number {threshold_number}",
+                "Model name": f"Ens num {ensemble_num}, cal = {calibrate}, {distance} start, th number {threshold_number}",
                 "AUDC": auc_start,
                 "Time to FA": time_to_FA_start,
                 "DD": delay_start,
@@ -250,7 +284,7 @@ def evaluate_wasserstein_thresholds_range(
 
         results_df = results_df.append(
             {
-                "Model name": f"Ens num {ensemble_num}, cal = {calibrate}, Wasserstein prev, th num {threshold_number}",
+                "Model name": f"Ens num {ensemble_num}, cal = {calibrate}, {distance} prev, th num {threshold_number}",
                 "AUDC": auc_prev,
                 "Time to FA": time_to_FA_prev,
                 "DD": delay_prev,
@@ -277,18 +311,19 @@ def evaluate_wasserstein_thresholds_range(
         if calibrate:
             model_name += "_calibrated"
 
-        save_path = f"results/final_results/{experiments_name}/{model_name}_ens_num_{ensemble_num}_{experiments_name}_th_num_range.csv"
+        save_path = f"results/final_results/{experiments_name}/{model_name}_ens_num_{ensemble_num}_{experiments_name}_{distance}_th_num_range.csv"
         results_df.to_csv(save_path)
 
     return results_df
 
 
-def evaluate_wasserstein_thresholds_range_all_ensembles(
+def evaluate_distance_thresholds_range_all_ensembles(
     experiments_name: str,
     model_type: str,
     loss_type: str = None,
     n_models: int = 10,
     calibrate: bool = False,
+    distance: str = "wasserstein_1d",
     threshold_number_list: List[int] = [1, 3, 5, 7, 9, 15, 20, 30, 50, 100, 200],
     seed: int = 42,
     verbose: bool = True,
@@ -296,13 +331,14 @@ def evaluate_wasserstein_thresholds_range_all_ensembles(
 ):
     res_df_list = []
     for ensemble_num in [1, 2, 3]:
-        curr_res_df = evaluate_wasserstein_thresholds_range(
+        curr_res_df = evaluate_distance_thresholds_range(
             experiments_name,
             model_type,
             loss_type,
             n_models,
             calibrate,
             ensemble_num,
+            distance,
             threshold_number_list,
             seed,
             verbose,
@@ -323,5 +359,5 @@ def evaluate_wasserstein_thresholds_range_all_ensembles(
         if calibrate:
             model_name += "_calibrated"
 
-        save_path = f"results/final_results/{experiments_name}/{model_name}_{experiments_name}_wasserstein_th_range.csv"
+        save_path = f"results/final_results/{experiments_name}/{model_name}_calibrated_{calibrate}_all_ensembles_{experiments_name}_{distance}_th_range.csv"
         results_df.to_csv(save_path)

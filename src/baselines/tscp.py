@@ -1,44 +1,18 @@
 """Functions & models for TS-CP2 baseline training and testing."""
 
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from src.baselines.prediction_utils import *
 from torch.utils.data import DataLoader, Dataset
-
-# from tsai.models.TCN import TCN
 
 # --------------------------------------------------------------------------------------#
 #                                      Loss                                             #
 # --------------------------------------------------------------------------------------#
-
-
-def _cosine_simililarity_dim1(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-    """Compute 1D cosine distance between 2 tensors.
-
-    :params x, y: input tensors
-    :return: cosine distance
-    """
-    cos = nn.CosineSimilarity(dim=1, eps=1e-6)
-    v = cos(x, y)
-    return v
-
-
-def _cosine_simililarity_dim2(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-    """Compute 2D cosine distance between 2 tensors.
-
-    :params x, y: input tensors
-    :return: cosine distance
-    """
-    # x shape: (N, 1, C)
-    # y shape: (1, 2N, C)
-    # v shape: (N, 2N)
-    cos = nn.CosineSimilarity(dim=2, eps=1e-6)
-    v = cos(x.unsqueeze(1), y.unsqueeze(0))
-    return v
 
 
 def nce_loss_fn(
@@ -82,280 +56,144 @@ def nce_loss_fn(
     return loss, mean_sim, mean_neg
 
 
-# --------------------------------------------------------------------------------------#
-#                               Data preprocessing                                      #
-# --------------------------------------------------------------------------------------#
+# def get_tscp_output_padded(
+#     tscp_model: nn.Module,
+#     batch: torch.Tensor,
+#     window_1: int,
+#     window_2: Optional[int] = None,
+#     step: int = 1,
+# ) -> List[torch.Tensor]:
+#     """Get TS-CP2 predictions scaled to [0, 1].
+
+#     :param tscp_model: pre-trained TS-CP2 model
+#     :param batch: input data
+#     :param window_1: "past" subsequence size
+#     :param window_2: "future" subsequence size (default None), if None set equal to window_1
+#     :param scales: scale factor
+#     :return: predicted change probability
+#     """
+#     tscp_model.eval()
+
+#     device = tscp_model.device
+#     batch = batch.to(device)
+
+#     # for 'synthetic1D', 'synthetic100D', 'human_activity' and "yahoo" datasets
+#     if len(batch.shape) == 3:
+#         seq_len = batch.shape[1]
+#         prepend = batch[:, 0:window_1, :]
+#         append = batch[
+#             :, -window_2:-1, :
+#         ]  # .unsqueeze(dim=1).repeat(1, window_2 - 1, 1)
+#         batch = torch.hstack((prepend, batch, append))
+
+#     # for 'mnist' dataset
+#     elif len(batch.shape) == 4:
+#         seq_len = batch.shape[1]
+#         prepend = batch[
+#             :, 0:window_1, :, :
+#         ]  # .unsqueeze(dim=1).repeat(1, window_1, 1, 1)
+#         append = batch[
+#             :, -window_2:-1, :, :
+#         ]  # .unsqueeze(dim=1).repeat(1, window_2 - 1, 1, 1)
+#         batch = torch.hstack((prepend, batch, append))
+
+#     # for video datasets
+#     else:
+#         seq_len = batch.shape[2]
+#         prepend = batch[
+#             :, :, 0:window_1, :, :
+#         ]  # .unsqueeze(dim=2).repeat(1, 1, window_1, 1, 1)
+#         append = batch[
+#             :, :, -window_2:-1, :, :
+#         ]  # .unsqueeze(dim=2).repeat(1, 1, window_2 - 1, 1, 1)
+#         batch = torch.dstack((prepend, batch, append))
+
+#     batch_history_slices, batch_future_slices = history_future_separation_test(
+#         batch, window_1, window_2, step=step
+#     )
+#     pred_out = []
+#     for history_slice, future_slice in zip(batch_history_slices, batch_future_slices):
+#         curr_history, curr_future = map(tscp_model, [history_slice, future_slice])
+#         rep_sim = _cosine_simililarity_dim1(curr_history, curr_future).data.unsqueeze(
+#             dim=0
+#         )
+#         # duplicate similarities in case of step > 1, crop the remainder
+#         rep_sim = torch.repeat_interleave(rep_sim, step, dim=1)[:, :seq_len]
+#         pred_out.append(rep_sim)
+
+#     pred_out = torch.cat(pred_out).to(batch.device)
+#     return pred_out
 
 
-def history_future_separation(
-    data: torch.Tensor, window: int
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Split sequences in batch on two equal slices.
+# def get_tscp_output_scaled(
+#     tscp_model: nn.Module,
+#     batch: torch.Tensor,
+#     window_1: int,
+#     window_2: Optional[int] = None,
+#     scale: float = 1.0,
+# ) -> List[torch.Tensor]:
+#     """Get TS-CP2 predictions scaled to [0, 1].
 
-    :param data: input sequences
-    :param window: slice size
-    :return: set of "past" subsequences and corresponded "future" subsequences
-    """
-    if len(data.shape) <= 4:
-        history = data[:, :window]
-        future = data[:, window : 2 * window]
-    elif len(data.shape) == 5:
-        history = data[:, :, :window]
-        future = data[:, :, window : 2 * window]
+#     :param tscp_model: pre-trained TS-CP2 model
+#     :param batch: input data
+#     :param window_1: "past" subsequence size
+#     :param window_2: "future" subsequence size (default None), if None set equal to window_1
+#     :param scales: scale factor
+#     :return: predicted change probability
+#     """
+#     device = tscp_model.device
+#     batch = batch.to(device)
 
-    return history, future
+#     if len(batch.shape) <= 4:
+#         seq_len = batch.shape[1]
+#     else:
+#         seq_len = batch.shape[2]
 
+#     batch_history_slices, batch_future_slices = history_future_separation_test(
+#         batch, window_1, window_2
+#     )
 
-def history_future_separation_test(
-    data: torch.Tensor,
-    window_1: int,
-    window_2: Optional[int] = None,
-    step: int = 1,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Prepare data for testing. Separate it in set of "past"-"future" slices.
+#     pred_out = []
+#     for i in range(len(batch_history_slices)):
+#         zeros = torch.ones(1, seq_len)
+#         curr_history = tscp_model(batch_history_slices[i])
+#         curr_future = tscp_model(batch_future_slices[i])
+#         rep_sim = _cosine_simililarity_dim1(curr_history, curr_future).data
+#         zeros[:, window_1 + window_2 - 1 :] = rep_sim
+#         pred_out.append(zeros)
 
-    :param data: input sequence
-    :param window_1: "past" subsequence size
-    :param window_2: "future" subsequence size (default None), if None set equal to window_1
-    :param step: step size
-    :return: set of "past" subsequences and corresponded "future" subsequences
-    """
-    future_slices = []
-    history_slices = []
+#     pred_out = torch.cat(pred_out).to(batch.device)
+#     pred_out = torch.sigmoid(-pred_out * scale)
+#     return pred_out
 
-    if window_2 is None:
-        window_2 = window_1
+# def post_process_tscp_output(outputs: torch.Tensor, scale: float = 1., alpha: float = 1.) -> torch.Tensor:
+#     """
+#     outputs = torch.sigmoid(-outputs * scale)
 
-    if len(data.shape) > 4:
-        data = data.transpose(1, 2)
+#     min_score = torch.sigmoid(-1 * torch.ones_like(outputs))
+#     max_score = torch.sigmoid(torch.ones_like(outputs))
 
-    seq_len = data.shape[1]
-    for i in range(0, (seq_len - window_1 - window_2) // step + 1):
-        start_ind = i * step
-        end_ind = window_1 + window_2 + step * i
-        slice_2w = data[:, start_ind:end_ind]
-        history_slices.append(slice_2w[:, :window_1].unsqueeze(0))
-        future_slices.append(slice_2w[:, window_1:].unsqueeze(0))
+#     outputs = (outputs - min_score) / (max_score - min_score)
 
-    future_slices = torch.cat(future_slices).transpose(0, 1)
-    history_slices = torch.cat(history_slices).transpose(0, 1)
+#     # default alpha = 1.0 means no EMA
+#     """
+#     seq_len = outputs.shape[1]
 
-    # in case of video data
-    if len(data.shape) > 4:
-        history_slices = history_slices.transpose(2, 3)
-        future_slices = future_slices.transpose(2, 3)
+#     scaled_outputs = -scale * outputs
+#     preds = torch.where(scaled_outputs >= 0, scaled_outputs, torch.zeros_like(scaled_outputs))
 
-    return history_slices, future_slices
+#     preds = ema_batch(preds, alpha)
 
+#     #min_score = torch.min(preds, axis=1)[0].unsqueeze(dim=1).repeat(1, seq_len)
+#     #max_score = torch.max(preds, axis=1)[0].unsqueeze(dim=1).repeat(1, seq_len)
 
-# --------------------------------------------------------------------------------------#
-#                                   Predictions                                         #
-# --------------------------------------------------------------------------------------#
-def ema_batch(outputs, alpha):
-    assert alpha >= 0 and alpha <= 1, "Smoothing factor alpha should be in [0, 1]."
-    seq_len = outputs.shape[1]
-    ema_outputs = outputs.clone()
-    for t in range(1, seq_len):
-        ema_outputs[:, t] = alpha * outputs[:, t] + (1 - alpha) * ema_outputs[:, t - 1]
+#     #scaled_preds = (preds - min_score) / (max_score - min_score)
 
-    return ema_outputs
-
-
-def get_tscp_output(
-    tscp_model: nn.Module,
-    batch: torch.Tensor,
-    window_1: int,
-    window_2: Optional[int] = None,
-    step: int = 1,
-) -> List[torch.Tensor]:
-    """Get TS-CP2 predictions scaled to [0, 1].
-
-    :param tscp_model: pre-trained TS-CP2 model
-    :param batch: input data
-    :param window_1: "past" subsequence size
-    :param window_2: "future" subsequence size (default None), if None set equal to window_1
-    :return: predicted change probability
-    """
-    tscp_model.eval()
-
-    device = tscp_model.device
-    batch = batch.to(device)
-
-    if len(batch.shape) <= 4:
-        seq_len = batch.shape[1]
-    else:
-        seq_len = batch.shape[2]
-
-    batch_history_slices, batch_future_slices = history_future_separation_test(
-        batch, window_1, window_2, step=step
-    )
-
-    pred_out = []
-    crop_size = seq_len - (window_1 + window_2 - 1)
-    for history_slice, future_slice in zip(batch_history_slices, batch_future_slices):
-        zeros = torch.ones(1, seq_len)
-        curr_history, curr_future = map(tscp_model, [history_slice, future_slice])
-        rep_sim = _cosine_simililarity_dim1(curr_history, curr_future).data
-        # duplicate similarities in case of step > 1, crop the remainder
-        rep_sim = torch.repeat_interleave(rep_sim, step, dim=0)[:crop_size]
-        zeros[:, window_1 + window_2 - 1 :] = rep_sim
-        pred_out.append(zeros)
-
-    pred_out = torch.cat(pred_out).to(batch.device)
-    pred_out = pred_out[:, window_1 + window_2 - 1 :]
-
-    return pred_out
-
-
-def get_tscp_output_padded(
-    tscp_model: nn.Module,
-    batch: torch.Tensor,
-    window_1: int,
-    window_2: Optional[int] = None,
-    step: int = 1,
-) -> List[torch.Tensor]:
-    """Get TS-CP2 predictions scaled to [0, 1].
-
-    :param tscp_model: pre-trained TS-CP2 model
-    :param batch: input data
-    :param window_1: "past" subsequence size
-    :param window_2: "future" subsequence size (default None), if None set equal to window_1
-    :param scales: scale factor
-    :return: predicted change probability
-    """
-    tscp_model.eval()
-
-    device = tscp_model.device
-    batch = batch.to(device)
-
-    # for 'synthetic1D', 'synthetic100D', 'human_activity' and "yahoo" datasets
-    if len(batch.shape) == 3:
-        seq_len = batch.shape[1]
-        prepend = batch[:, 0:window_1, :]
-        append = batch[
-            :, -window_2:-1, :
-        ]  # .unsqueeze(dim=1).repeat(1, window_2 - 1, 1)
-        batch = torch.hstack((prepend, batch, append))
-
-    # for 'mnist' dataset
-    elif len(batch.shape) == 4:
-        seq_len = batch.shape[1]
-        prepend = batch[
-            :, 0:window_1, :, :
-        ]  # .unsqueeze(dim=1).repeat(1, window_1, 1, 1)
-        append = batch[
-            :, -window_2:-1, :, :
-        ]  # .unsqueeze(dim=1).repeat(1, window_2 - 1, 1, 1)
-        batch = torch.hstack((prepend, batch, append))
-
-    # for video datasets
-    else:
-        seq_len = batch.shape[2]
-        prepend = batch[
-            :, :, 0:window_1, :, :
-        ]  # .unsqueeze(dim=2).repeat(1, 1, window_1, 1, 1)
-        append = batch[
-            :, :, -window_2:-1, :, :
-        ]  # .unsqueeze(dim=2).repeat(1, 1, window_2 - 1, 1, 1)
-        batch = torch.dstack((prepend, batch, append))
-
-    batch_history_slices, batch_future_slices = history_future_separation_test(
-        batch, window_1, window_2, step=step
-    )
-    pred_out = []
-    for history_slice, future_slice in zip(batch_history_slices, batch_future_slices):
-        curr_history, curr_future = map(tscp_model, [history_slice, future_slice])
-        rep_sim = _cosine_simililarity_dim1(curr_history, curr_future).data.unsqueeze(
-            dim=0
-        )
-        # duplicate similarities in case of step > 1, crop the remainder
-        rep_sim = torch.repeat_interleave(rep_sim, step, dim=1)[:, :seq_len]
-        pred_out.append(rep_sim)
-
-    pred_out = torch.cat(pred_out).to(batch.device)
-    return pred_out
-
-
-def get_tscp_output_scaled(
-    tscp_model: nn.Module,
-    batch: torch.Tensor,
-    window_1: int,
-    window_2: Optional[int] = None,
-    scale: float = 1.0,
-) -> List[torch.Tensor]:
-    """Get TS-CP2 predictions scaled to [0, 1].
-
-    :param tscp_model: pre-trained TS-CP2 model
-    :param batch: input data
-    :param window_1: "past" subsequence size
-    :param window_2: "future" subsequence size (default None), if None set equal to window_1
-    :param scales: scale factor
-    :return: predicted change probability
-    """
-    device = tscp_model.device
-    batch = batch.to(device)
-
-    if len(batch.shape) <= 4:
-        seq_len = batch.shape[1]
-    else:
-        seq_len = batch.shape[2]
-
-    batch_history_slices, batch_future_slices = history_future_separation_test(
-        batch, window_1, window_2
-    )
-
-    pred_out = []
-    for i in range(len(batch_history_slices)):
-        zeros = torch.ones(1, seq_len)
-        curr_history = tscp_model(batch_history_slices[i])
-        curr_future = tscp_model(batch_future_slices[i])
-        rep_sim = _cosine_simililarity_dim1(curr_history, curr_future).data
-        zeros[:, window_1 + window_2 - 1 :] = rep_sim
-        pred_out.append(zeros)
-
-    pred_out = torch.cat(pred_out).to(batch.device)
-    pred_out = torch.sigmoid(-pred_out * scale)
-    return pred_out
-
-
-'''
-def post_process_tscp_output(outputs: torch.Tensor, scale: float = 1., alpha: float = 1.) -> torch.Tensor:
-    """
-    outputs = torch.sigmoid(-outputs * scale)
-    
-    min_score = torch.sigmoid(-1 * torch.ones_like(outputs))
-    max_score = torch.sigmoid(torch.ones_like(outputs))
-    
-    outputs = (outputs - min_score) / (max_score - min_score)
-
-    # default alpha = 1.0 means no EMA
-    """
-    seq_len = outputs.shape[1]
-
-    scaled_outputs = -scale * outputs
-    preds = torch.where(scaled_outputs >= 0, scaled_outputs, torch.zeros_like(scaled_outputs))
-
-    preds = ema_batch(preds, alpha)
-
-    #min_score = torch.min(preds, axis=1)[0].unsqueeze(dim=1).repeat(1, seq_len)
-    #max_score = torch.max(preds, axis=1)[0].unsqueeze(dim=1).repeat(1, seq_len)
-
-    #scaled_preds = (preds - min_score) / (max_score - min_score)
-
-    return preds
-'''
-
-
-def post_process_tscp_output(
-    outputs: torch.Tensor, scale: float = 1.0, alpha: float = 1.0
-) -> torch.Tensor:
-    preds = 1.0 - torch.where(outputs >= 0, outputs, torch.zeros_like(outputs))
-    preds = ema_batch(preds, alpha)
-    return preds
+#     return preds
 
 
 # --------------------------------------------------------------------------------------#
-#                                      Models                                           #
+#                                     Models                                            #
 # --------------------------------------------------------------------------------------#
 
 
@@ -655,6 +493,7 @@ class TSCP_model(pl.LightningModule):
         super().__init__()
 
         self.model = model
+        self.args = args
 
         # Feature extractor for video datasets
         if args["experiments_name"] in ["explosion", "road_accidents"]:
@@ -754,7 +593,7 @@ class TSCP_model(pl.LightningModule):
         history_emb = nn.functional.normalize(history_emb, p=2, dim=1)
         future_emb = nn.functional.normalize(future_emb, p=2, dim=1)
 
-        val_loss, pos_sim, neg_sim = nce_loss_fn(
+        val_loss, _, _ = nce_loss_fn(
             history_emb,
             future_emb,
             similarity=_cosine_simililarity_dim2,

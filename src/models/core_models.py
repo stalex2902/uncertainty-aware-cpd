@@ -114,6 +114,7 @@ class BaseRnn(nn.Module):
         n_layers: int,
         drop_prob: float,
         layer_norm: bool,
+        ln_type: str,
         temperature: float = 1.0,
         return_logits: bool = False,
     ) -> None:
@@ -127,13 +128,19 @@ class BaseRnn(nn.Module):
         """
         super().__init__()
 
+        if layer_norm:
+            assert ln_type != "none", "If layer_norm = False, use nn.LSTM"
+
         self.input_size = input_size
         self.n_layers = n_layers
         self.hidden_dim = hidden_dim
 
         if layer_norm:
             self.lstm = LayerNormLSTM(
-                input_size, hidden_dim, batch_first=True, ln_type="after"
+                input_size,
+                hidden_dim,
+                batch_first=True,
+                ln_type=ln_type,
             )
         else:
             self.lstm = nn.LSTM(
@@ -266,6 +273,7 @@ class CombinedVideoRNN(nn.Module):
         rnn_dropout: float,
         dropout: float,
         layer_norm: bool,
+        ln_type: str,
         temperature: float = 1.0,
         return_logits: bool = False,
     ) -> None:
@@ -277,12 +285,16 @@ class CombinedVideoRNN(nn.Module):
         :param dropout: dropout probability in Dropout layer
         """
         super(CombinedVideoRNN, self).__init__()
+
+        if layer_norm:
+            assert ln_type != "none", "If layer_norm = False, use nn.LSTM"
+
         if layer_norm:
             self.rnn = LayerNormLSTM(
                 input_size=input_dim,
                 hidden_size=rnn_hidden_dim,
                 batch_first=True,
-                ln_type="after",
+                ln_type=ln_type,
             )
 
         else:

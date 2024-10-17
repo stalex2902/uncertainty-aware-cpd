@@ -6,7 +6,7 @@ import pytorch_lightning as pl
 import torch
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.loggers import TensorBoardLogger
-from src.baselines import klcpd, tscp
+from src.baselines import prediction_utils
 from src.datasets import datasets
 from src.ensembles import distances
 from src.models import model_utils
@@ -157,10 +157,10 @@ class EnsembleCPDModel(ABC):
                     outs = model.get_predictions(inputs).squeeze()
                 else:
                     outs = model(inputs).squeeze()
-            elif self.args["model_type"] == "kl_cpd":
-                outs = klcpd.get_klcpd_output_scaled(
-                    model, inputs, model.window_1, model.window_2, scale=scale
-                )
+            # elif self.args["model_type"] == "kl_cpd":
+            #     outs = klcpd.get_klcpd_output_scaled(
+            #         model, inputs, model.window_1, model.window_2, scale=scale
+            # )
             elif self.args["model_type"] == "tscp":
                 # outs = tscp.get_tscp_output_scaled(model, inputs, model.window_1, model.window_2, scale=scale)
                 # outs = tscp.get_tscp_output_scaled_padded(
@@ -169,10 +169,30 @@ class EnsembleCPDModel(ABC):
                 # outs = tscp.get_tscp_output_padded(
                 #     model, inputs, model.window_1, model.window_2, step=step
                 # )
-                outs = tscp.get_tscp_output(
-                    model, inputs, model.window_1, model.window_2, step=step
+                outs = prediction_utils.get_repr_learning_output(
+                    model,
+                    inputs,
+                    model.window_1,
+                    model.window_2,
+                    step=step,
+                    max_pool=False,
                 )
-                outs = tscp.post_process_tscp_output(outs, scale=scale, alpha=alpha)
+                outs = prediction_utils.post_process_output(
+                    outs, scale=scale, alpha=alpha
+                )
+
+            elif self.args["model_type"] == "ts2vec":
+                outs = prediction_utils.get_repr_learning_output(
+                    model,
+                    inputs,
+                    model.window_1,
+                    model.window_2,
+                    step=step,
+                    max_pool=True,
+                )
+                outs = prediction_utils.post_process_output(
+                    outs, scale=scale, alpha=alpha
+                )
 
             else:
                 raise ValueError(
@@ -182,6 +202,8 @@ class EnsembleCPDModel(ABC):
 
         # shape is (n_models, batch_size, seq_len)
         ensemble_preds = torch.stack(ensemble_preds)
+        if len(ensemble_preds.shape) < 3:
+            ensemble_preds = ensemble_preds.unsqueeze(0)
         self.preds = ensemble_preds
 
         return ensemble_preds
@@ -202,13 +224,6 @@ class EnsembleCPDModel(ABC):
 
         preds_mean = torch.mean(ensemble_preds, axis=0).reshape(batch_size, seq_len)
         preds_std = torch.std(ensemble_preds, axis=0).reshape(batch_size, seq_len)
-
-        # if self.args["model_type"] == "tscp":
-        #    preds_mean = tscp.post_process_tscp_output(preds_mean, scale=scale, alpha=alpha)
-
-        # TODO: how to fix std post-processing?..
-        # preds_std = tscp.post_process_tscp_output(preds_std, scale=scale, alpha=alpha)
-        # preds_std = torch.zeros_like(preds_mean)
 
         return preds_mean, preds_std
 
@@ -237,27 +252,6 @@ class EnsembleCPDModel(ABC):
         preds_std = torch.std(ensemble_preds, axis=0).reshape(batch_size, seq_len)
 
         return preds_quantile, preds_std
-
-    # def get_min_max_predictions(
-    #     self, inputs: torch.Tensor, mode: str, scale: int = None
-    # ) -> torch.Tensor:
-    #     """Get the point-wise minimum/maximum of the predicted CP scores distribution.
-
-    #     :param inputs: input batch of sequences
-    #     :param scale: scale parameter for KL-CPD and TSCP2 models
-
-    #     :returns: torch.Tensor containing quantile predictions
-    #     """
-    #     _, preds_std = self.predict(inputs)
-
-    #     # torch.min() and torch.max() return a tuple (values, indices)
-    #     if mode == "min":
-    #         preds = torch.min(self.preds, axis=0)[0]
-    #     elif mode == "max":
-    #         preds = torch.max(self.preds, axis=0)[0]
-    #     else:
-    #         raise ValueError(f"Wring mode {mode}. Only 'min' and 'max' are available.")
-    #     return preds, preds_std
 
     def save_models_list(self, path_to_folder: str) -> None:
         """Save trained models.
@@ -654,7 +648,7 @@ class DistanceEnsembleCPDModel(ABC):
         self, inputs: torch.Tensor, scale: int = None, step: int = 1, alpha: float = 1.0
     ) -> torch.Tensor:
         ensemble_preds = self.ens_model.predict_all_models(inputs, scale, step, alpha)
-        preds, _ = self.distance_detector(ensemble_preds)
+        preds, _ = self.distance_detector(ensemble_preds.detach())
         return preds
 
     def fake_predict(self, ensemble_preds: torch.Tensor):

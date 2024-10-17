@@ -1,8 +1,8 @@
 import argparse
 import warnings
 
-from scripts.evaluate_wasserstein_thresholds_range import (
-    evaluate_wasserstein_thresholds_range_all_ensembles,
+from scripts.evaluate_distance_thresholds_range import (
+    evaluate_distance_thresholds_range_all_ensembles,
 )
 
 warnings.filterwarnings("ignore")
@@ -18,10 +18,8 @@ def get_parser():
         required=True,
         help="name of sdataset",
         choices=[
-            "synthetic_1D",
-            "synthetic_100D",
-            "mnist",
             "human_activity",
+            "yahoo",
             "explosion",
             "road_accidents",
         ],
@@ -31,7 +29,7 @@ def get_parser():
         type=str,
         required=True,
         help="Model type",
-        choices=["seq2seq", "tscp"],
+        choices=["seq2seq", "tscp", "ts2vec"],
     )
     parser.add_argument(
         "--loss_type",
@@ -51,7 +49,13 @@ def get_parser():
         default=False,
         help="If True, calibrate the models using Beta calibration",
     )
-
+    parser.add_argument(
+        "--distance",
+        type=str,
+        default="wasserstein_1d",
+        help="Distance type",
+        choices=["wasserstein_1d", "wasserstein_nd", "mmd"],
+    )
     # parser.add_argument(
     #     "-tn_list",
     #     "--threshold_number_list",
@@ -81,29 +85,25 @@ def get_parser():
 
 
 def main(args) -> None:
-    """Hydra entrypoint.
-
-    Args:
-    ----
-        cfg (DictConfig): hydra config.
-    """
     (
         experiments_name,
         model_type,
         loss_type,
         n_models,
         calibrate,
+        distance,
         # threshold_number_list,
         seed,
         verbose,
         save_df,
     ) = args.values()
-    _ = evaluate_wasserstein_thresholds_range_all_ensembles(
+    _ = evaluate_distance_thresholds_range_all_ensembles(
         experiments_name=experiments_name,
         model_type=model_type,
         loss_type=loss_type,
         n_models=n_models,
         calibrate=calibrate,
+        distance=distance,
         # threshold_number_list,
         seed=seed,
         verbose=verbose,

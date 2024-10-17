@@ -7,7 +7,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from scipy.stats import ttest_ind
-from src.baselines import klcpd, tscp
+from src.baselines import prediction_utils
 from src.models.cpd_models import ClassicBaseline
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -392,65 +392,23 @@ def get_models_predictions(
     except AttributeError:
         inputs = [t.to(device) for t in inputs]
 
-    true_labels = labels.to(device)
+    if labels is not None:
+        true_labels = labels.to(device)
+    else:
+        true_labels = labels
 
-    if model_type in ["simple", "weak_labels"]:
-        outs = []
-        true_labels = []
-        for batch_n in range(inputs.shape[0]):
-            inp = inputs[batch_n].to(device)
-            lab = labels[batch_n].to(device)
-
-            if model_type == "simple":
-                # TODO FIX
-                # out = [model(inp[i].flatten().unsqueeze(0).float()).squeeze() for i in range(0, len(inp))]
-                out = [
-                    model(inp[:, i].unsqueeze(0).float()).squeeze()
-                    for i in range(0, len(inp))
-                ]
-
-            elif (model_type == "weak_labels") and (subseq_len is not None):
-                out_end = [
-                    model(inp[i : i + subseq_len].flatten(1).unsqueeze(0).float())
-                    for i in range(0, len(inp) - subseq_len)
-                ]
-                out = [torch.zeros(len(lab) - len(out_end), 1, device=device)]
-                out.extend(out_end)
-                out = torch.cat(out)
-            true_labels += [lab]
-            # TODO: fix
-            try:
-                outs.append(torch.stack(out))
-            except:  # noqa: E722
-                outs.append(out)
-        outs = torch.stack(outs)
-        true_labels = torch.stack(true_labels)
-
-        # no uncertainty for these models
+    if model_type == "tscp":
+        outs = prediction_utils.get_repr_learning_output(
+            model, inputs, model.window_1, model.window_2, step=step, max_pool=False
+        )
+        outs = prediction_utils.post_process_output(outs, scale=scale, alpha=alpha)
         uncertainties = None
 
-    elif model_type == "tscp":
-        # outs = tscp.get_tscp_output_scaled(
-        #     model, inputs, model.window_1, model.window_2, scale=scale
-        # )
-
-        # outs = tscp.get_tscp_output_scaled_padded(
-        #    model, inputs, model.window_1, model.window_2, scale=scale, step=step, alpha=alpha
-        # )
-        # outs = tscp.get_tscp_output_padded(model, inputs, model.window_1, model.window_2, step=step)
-
-        # FINAL version!
-        outs = tscp.get_tscp_output(
-            model, inputs, model.window_1, model.window_2, step=step
+    if model_type == "ts2vec":
+        outs = prediction_utils.get_repr_learning_output(
+            model, inputs, model.window_1, model.window_2, step=step, max_pool=True
         )
-        outs = tscp.post_process_tscp_output(outs, scale=scale, alpha=alpha)
-
-        uncertainties = None
-
-    elif model_type == "kl_cpd":
-        outs = klcpd.get_klcpd_output_scaled(
-            model, inputs, model.window_1, model.window_2, scale=scale
-        )
+        outs = prediction_utils.post_process_output(outs, scale=scale, alpha=alpha)
         uncertainties = None
 
     elif model_type == "ensemble":
@@ -462,29 +420,21 @@ def get_models_predictions(
         uncertainties = None
 
     elif model_type == "ensemble_quantile":
-        outs, uncertainties = model.get_quantile_predictions(inputs, q, scale=scale)
-
-    elif model_type == "ensemble_max":
-        outs, uncertainties = model.get_min_max_predictions(
-            inputs, mode="max", scale=scale
+        outs, uncertainties = model.get_quantile_predictions(
+            inputs, q, scale=scale, step=step, alpha=alpha
         )
 
-    elif model_type == "ensemble_min":
-        outs, uncertainties = model.get_min_max_predictions(
-            inputs, mode="min", scale=scale
-        )
-
-    elif model_type == "cusum_aggr":
-        outs = model.predict(inputs, scale=scale, step=step, alpha=alpha)
-        uncertainties = None
+    # elif model_type == "cusum_aggr":
+    #     outs = model.predict(inputs, scale=scale, step=step, alpha=alpha)
+    #     uncertainties = None
 
     elif model_type == "mmd_aggr":
         outs = model.predict(inputs, scale=scale, step=step, alpha=alpha)
         uncertainties = None
 
-    elif model_type == "cusum_traject":
-        outs = model.predict_cusum_trajectories(inputs, q)
-        uncertainties = None
+    # elif model_type == "cusum_traject":
+    #     outs = model.predict_cusum_trajectories(inputs, q)
+    #     uncertainties = None
 
     elif model_type == "seq2seq":
         outs = model(inputs)
@@ -497,9 +447,9 @@ def get_models_predictions(
     elif model_type == "fake_ensemble":
         outs, uncertainties = inputs[0], inputs[1]
 
-    elif model_type == "fake_cusum":
-        outs, _ = model.fake_predict(inputs[0], inputs[1])
-        uncertainties = None
+    # elif model_type == "fake_cusum":
+    #     outs, _ = model.fake_predict(inputs[0], inputs[1])
+    #     uncertainties = None
 
     elif model_type == "fake_mmd":
         outs, _ = model.fake_predict(inputs)

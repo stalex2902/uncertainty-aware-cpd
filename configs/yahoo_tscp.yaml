@@ -47,3 +47,5 @@ distance:
 
 evaluation:
   margin_list: [50, 100, 200]
+
+model_type: tscp

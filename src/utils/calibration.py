@@ -10,6 +10,7 @@ from betacal import BetaCalibration
 from sklearn.calibration import calibration_curve
 from src.metrics.metrics_utils import (
     collect_model_predictions_on_set,
+    get_models_predictions,
 )
 from torch import nn, optim
 from torch.nn import functional as F
@@ -210,14 +211,12 @@ class ModelWithTemperature(nn.Module):
         cal_preds = self.model(inputs)
         return cal_preds
 
-    def predict_all(
-        self, dataloader, model_type="seq2seq", device="cpu", verbose=False
-    ):
+    def predict_all(self, dataloader, verbose=False):
         test_out_bank, _, test_labels_bank = collect_model_predictions_on_set(
             self.model,
             dataloader,
-            model_type=model_type,
-            device=device,
+            model_type=self.model.args["model_type"],
+            device=self.device,
             verbose=verbose,
             # preprocessor=self.preprocessor,
         )
@@ -242,17 +241,22 @@ class ModelBeta:
         # self.preprocessor = preprocessor
 
         self.calibrator = BetaCalibration(parameters)
-
         self.device = device
+
+        try:
+            self.window_1 = model.window_1
+            self.window_2 = model.window_2
+        except:
+            pass
 
     def eval(self):
         self.model.eval()
 
-    def to(self, device):
-        self.model.to(self.device)
+    def to(self, device: str = "cpu"):
+        self.model.to(device)
 
     # This function probably should live outside of this class, but whatever
-    def fit(self, dataoader, model_type="seq2seq", device="cuda", verbose=True):
+    def fit(self, dataoader, verbose=True):
         """
         Tune the tempearature of the model (using the validation set).
         We're going to set it to optimize NLL.
@@ -261,8 +265,8 @@ class ModelBeta:
         test_out_bank, _, test_labels_bank = collect_model_predictions_on_set(
             self.model,
             dataoader,
-            model_type=model_type,
-            device=device,
+            model_type=self.model.args["model_type"],
+            device=self.device,
             verbose=verbose,
         )
 
@@ -273,23 +277,36 @@ class ModelBeta:
 
         return self
 
-    def get_predictions(self, inputs):  # seq2seq ONLY
-        preds = self.model(inputs).detach().cpu()
+    def get_predictions(self, inputs):
+        model_type = self.model.args["model_type"]
 
-        # bs, seq_len = preds.shape
+        if model_type == "tscp":
+            scale, step, alpha = self.model.args["predictions"].values()
+        else:
+            scale, step, alpha = None, None, None
+
+        preds, _, _ = get_models_predictions(
+            inputs=inputs,
+            labels=None,
+            model=self.model,
+            model_type=model_type,
+            device=self.device,
+            scale=scale,
+            step=step,
+            alpha=alpha,
+        )
+        preds = preds.detach().cpu()
 
         cal_preds = self.calibrator.predict(preds.flatten()).reshape(preds.shape)
 
         return torch.from_numpy(cal_preds)
 
-    def predict_all(
-        self, dataloader, model_type="seq2seq", device="cpu", verbose=False
-    ):
+    def predict_all(self, dataloader, verbose=False):
         test_out_bank, _, test_labels_bank = collect_model_predictions_on_set(
             self.model,
             dataloader,
-            model_type=model_type,
-            device=device,
+            model_type=self.model.args["model_type"],
+            device=self.device,
             verbose=verbose,
         )
 
@@ -436,7 +453,7 @@ def plot_calibration_curves(
     for i, model in enumerate(ens_model.models_list[:model_num]):
         if calibrated:
             test_out_flat, test_labels_flat = model.predict_all(
-                test_dataloader, model_type=model_type, device=device, verbose=verbose
+                test_dataloader, verbose=verbose
             )
         else:
             test_out_bank, _, test_labels_bank = collect_model_predictions_on_set(

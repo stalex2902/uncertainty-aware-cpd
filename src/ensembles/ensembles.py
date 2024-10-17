@@ -213,7 +213,12 @@ class EnsembleCPDModel(ABC):
         return preds_mean, preds_std
 
     def get_quantile_predictions(
-        self, inputs: torch.Tensor, q: float, scale: int = None
+        self,
+        inputs: torch.Tensor,
+        q: float,
+        scale: int = None,
+        step: int = 1,
+        alpha: float = 1.0,
     ) -> torch.Tensor:
         """Get the q-th quantile of the predicted CP scores distribution.
 
@@ -223,30 +228,36 @@ class EnsembleCPDModel(ABC):
 
         :returns: torch.Tensor containing quantile predictions
         """
-        _, preds_std = self.predict(inputs)
-        preds_quantile = torch.quantile(self.preds, q, axis=0)
+        ensemble_preds = self.predict_all_models(inputs, scale, step, alpha)
+        _, batch_size, seq_len = ensemble_preds.shape
+
+        preds_quantile = torch.quantile(ensemble_preds, q, axis=0).reshape(
+            batch_size, seq_len
+        )
+        preds_std = torch.std(ensemble_preds, axis=0).reshape(batch_size, seq_len)
+
         return preds_quantile, preds_std
 
-    def get_min_max_predictions(
-        self, inputs: torch.Tensor, mode: str, scale: int = None
-    ) -> torch.Tensor:
-        """Get the point-wise minimum/maximum of the predicted CP scores distribution.
+    # def get_min_max_predictions(
+    #     self, inputs: torch.Tensor, mode: str, scale: int = None
+    # ) -> torch.Tensor:
+    #     """Get the point-wise minimum/maximum of the predicted CP scores distribution.
 
-        :param inputs: input batch of sequences
-        :param scale: scale parameter for KL-CPD and TSCP2 models
+    #     :param inputs: input batch of sequences
+    #     :param scale: scale parameter for KL-CPD and TSCP2 models
 
-        :returns: torch.Tensor containing quantile predictions
-        """
-        _, preds_std = self.predict(inputs)
+    #     :returns: torch.Tensor containing quantile predictions
+    #     """
+    #     _, preds_std = self.predict(inputs)
 
-        # torch.min() and torch.max() return a tuple (values, indices)
-        if mode == "min":
-            preds = torch.min(self.preds, axis=0)[0]
-        elif mode == "max":
-            preds = torch.max(self.preds, axis=0)[0]
-        else:
-            raise ValueError(f"Wring mode {mode}. Only 'min' and 'max' are available.")
-        return preds, preds_std
+    #     # torch.min() and torch.max() return a tuple (values, indices)
+    #     if mode == "min":
+    #         preds = torch.min(self.preds, axis=0)[0]
+    #     elif mode == "max":
+    #         preds = torch.max(self.preds, axis=0)[0]
+    #     else:
+    #         raise ValueError(f"Wring mode {mode}. Only 'min' and 'max' are available.")
+    #     return preds, preds_std
 
     def save_models_list(self, path_to_folder: str) -> None:
         """Save trained models.
@@ -649,4 +660,3 @@ class DistanceEnsembleCPDModel(ABC):
     def fake_predict(self, ensemble_preds: torch.Tensor):
         """In case of pre-computed model outputs."""
         return self.distance_detector(ensemble_preds.transpose(0, 1))
-        # return preds, scores

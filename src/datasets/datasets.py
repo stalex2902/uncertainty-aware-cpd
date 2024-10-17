@@ -608,6 +608,7 @@ class UCFVideoDataset(Dataset):
 
         # IO
         self.path_to_data = path_to_data
+
         self.video_list = UCFVideoDataset._get_video_list(
             dataset_path=self.path_to_data
         )
@@ -616,7 +617,7 @@ class UCFVideoDataset(Dataset):
         dict_metadata, _ = UCFVideoDataset._parse_annotation(path_to_annotation)
 
         path_to_clips = "{}_clips_len_{}_step_{}_fps_{}.pth".format(
-            self.path_to_data.split("/")[1],
+            self.path_to_data.split("/")[3],  #!!!!!!!!!!!!!!
             self.clip_length_in_frames,
             self.step_between_clips,
             self.fps,

@@ -27,3 +27,5 @@ early_stopping:
   monitor: "val_mmd2_real_D"
   min_delta: 0.00001
   patience: 5
+
+model_type: kl_cpd

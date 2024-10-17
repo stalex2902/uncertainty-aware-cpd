@@ -17,3 +17,5 @@ early_stopping:
   monitor: "val_loss"
   min_delta: 0
   patience: 10
+
+model_type: seq2seq

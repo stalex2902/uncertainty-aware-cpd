@@ -65,8 +65,9 @@ def get_parser():
     parser.add_argument(
         "--eval_comp",
         "--evaluation_components",
-        type=list[str],
-        default=["mean", "distances", "cusums"],
+        type=str,
+        nargs="*",
+        default=["mean", "min", "max", "median", "distances", "cusums"],
         help="What types of procedures to evaluate",
     )
 

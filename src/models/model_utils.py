@@ -4,7 +4,7 @@ from typing import List
 
 import pytorch_lightning as pl
 import ruptures as rpt
-from src.baselines import klcpd, tscp
+from src.baselines import klcpd, ts2vec_sn, tscp
 from src.models import core_models, cpd_models
 from torch.utils.data import Dataset
 
@@ -30,6 +30,9 @@ def get_models_list(
 
     elif args["model_type"] == "tscp":
         models_list = get_tscp_models_list(args, train_dataset, test_dataset)
+
+    elif args["model_type"] == "ts2vec":
+        models_list = get_ts2vec_models_list(args, train_dataset, test_dataset)
 
     elif args["model_type"].startswith("classic"):
         models_list = get_classic_models_list(args)
@@ -59,13 +62,25 @@ def get_seq2seq_models_list(
         "yahoo",
     ]:
         # initialize default base model for Synthetic Normal 1D experiment
-        core_model = core_models.BaseRnn(
-            input_size=args["model"]["input_size"],
-            hidden_dim=args["model"]["hidden_dim"],
-            n_layers=args["model"]["n_layers"],
-            drop_prob=args["model"]["drop_prob"],
-            layer_norm=args["model"]["layer_norm"],
-        )
+        if args["model"]["layer_norm"]:
+            assert "ln_type" in args["model"].keys()
+            core_model = core_models.BaseRnn(
+                input_size=args["model"]["input_size"],
+                hidden_dim=args["model"]["hidden_dim"],
+                n_layers=args["model"]["n_layers"],
+                drop_prob=args["model"]["drop_prob"],
+                layer_norm=args["model"]["layer_norm"],
+                ln_type=args["model"]["ln_type"],
+            )
+        else:
+            core_model = core_models.BaseRnn(
+                input_size=args["model"]["input_size"],
+                hidden_dim=args["model"]["hidden_dim"],
+                n_layers=args["model"]["n_layers"],
+                drop_prob=args["model"]["drop_prob"],
+                layer_norm=args["model"]["layer_norm"],
+                ln_type=None,
+            )
 
     elif args["experiments_name"] == "mnist":
         # initialize default base model for MNIST experiment
@@ -80,14 +95,27 @@ def get_seq2seq_models_list(
         )
 
     elif args["experiments_name"] in ["explosion", "road_accidents"]:
-        core_model = core_models.CombinedVideoRNN(
-            input_dim=args["model"]["input_size"],
-            rnn_hidden_dim=args["model"]["hidden_rnn"],
-            num_layers=args["model"]["rnn_n_layers"],
-            rnn_dropout=args["model"]["rnn_dropout"],
-            dropout=args["model"]["dropout"],
-            layer_norm=args["model"]["layer_norm"],
-        )
+        if args["model"]["layer_norm"]:
+            assert "ln_type" in args["model"].keys()
+            core_model = core_models.CombinedVideoRNN(
+                input_dim=args["model"]["input_size"],
+                rnn_hidden_dim=args["model"]["hidden_rnn"],
+                num_layers=args["model"]["rnn_n_layers"],
+                rnn_dropout=args["model"]["rnn_dropout"],
+                dropout=args["model"]["dropout"],
+                layer_norm=args["model"]["layer_norm"],
+                ln_type=args["model"]["ln_type"],
+            )
+        else:
+            core_model = core_models.CombinedVideoRNN(
+                input_dim=args["model"]["input_size"],
+                rnn_hidden_dim=args["model"]["hidden_rnn"],
+                num_layers=args["model"]["rnn_n_layers"],
+                rnn_dropout=args["model"]["rnn_dropout"],
+                dropout=args["model"]["dropout"],
+                layer_norm=args["model"]["layer_norm"],
+                ln_type=None,
+            )
     else:
         raise ValueError("Wrong experiment name.")
 
@@ -174,6 +202,33 @@ def get_tscp_models_list(
     encoder = tscp.BaseTSCPEncoder(args)
 
     model = tscp.TSCP_model(
+        args=args, model=encoder, train_dataset=train_dataset, test_dataset=test_dataset
+    )
+
+    models_list = [model]
+    return models_list
+
+
+def get_ts2vec_models_list(
+    args: dict, train_dataset: Dataset, test_dataset: Dataset
+) -> List[tscp.TSCP_model]:
+    """Initialize TS-CP2 models for a particular experiment.
+
+    :param args: dict with all the parameters
+    :param train_dataset: training data
+    :param test_dataset: testing data
+    :returns: list with 1 TS-CP2 model
+    """
+    # universal encoder for all the experiments
+    encoder = ts2vec_sn.TSEncoder(
+        input_dim=args["model"]["input_dim"],
+        output_dim=args["model"]["output_dim"],
+        hidden_dim=args["model"]["hidden_dim"],
+        depth=args["model"]["depth"],
+        spec_norm=args["model"]["spec_norm"],
+    )
+
+    model = ts2vec_sn.TS2Vec(
         args=args, model=encoder, train_dataset=train_dataset, test_dataset=test_dataset
     )
 

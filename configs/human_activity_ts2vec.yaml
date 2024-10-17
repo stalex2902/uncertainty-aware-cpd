@@ -1,21 +1,26 @@
 model:
-# TODO
-  code_size: 4
+  c_in: 28
+  input_dim: 28
+  output_dim: 32
+  hidden_dim: 128
+  depth: 8
+  spec_norm: True
   window: 4
   window_1: 4
   window_2: 4
+  max_train_length: null
   
 learning:
-  batch_size: 
-  lr: 
+  batch_size: 128
+  lr: 0.001
   epochs: 40
-  decay_steps: 
-  grad_clip: 0. # no clipping
-  accelerator: cuda
-  devices: 1
+  grad_clip: 0.
+  weight_decay: 0.2
 
 loss:
-  temperature: 0.1
+  temporal_unit: 0
+
+num_workers: 2
 
 predictions:
   scale: 1.
@@ -23,9 +28,9 @@ predictions:
   alpha: 1.
 
 early_stopping:
-  monitor: train_loss_epoch
-  min_delta: 0.0001
-  patience: 5
+  monitor: val_loss
+  min_delta: 0
+  patience: 40
 
 cusum:
   normal_sigma: null

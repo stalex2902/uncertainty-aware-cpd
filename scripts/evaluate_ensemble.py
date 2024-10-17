@@ -148,6 +148,16 @@ def evaluate_ensemble(
         else:
             raise ValueError(f"Wrong experiments name {experiments_name}")
 
+    elif model_type == "ts2vec":
+        if experiments_name == "yahoo":
+            path_to_models_folder = f"saved_models/ts2vec/yahoo/ens_{ensemble_num}"
+        elif experiments_name == "human_activity":
+            path_to_models_folder = (
+                f"saved_models/ts2vec/human_activity/ens_{ensemble_num}"
+            )
+        else:
+            raise ValueError(f"Wrong experiments name {experiments_name}")
+
     else:
         raise ValueError(f"Wrong model type {model_type}")
 
@@ -402,7 +412,7 @@ def evaluate_ensemble(
             distance="wasserstein_1d",
             device=device,
             verbose=verbose,
-            window_size_list=[1, 2, 3],
+            window_size_list=args_config["distance"]["window_size_list"],
             margin_list=args_config["evaluation"]["margin_list"],
             anchor_window_type_list=args_config["distance"]["anchor_window_type_list"],
             threshold_list=threshold_list_dist,

@@ -362,6 +362,10 @@ class TS2Vec(pl.LightningModule):
         self.batch_size = args["learning"]["batch_size"]
         self.weight_decay = args["learning"]["weight_decay"]
 
+        self.window = args["model"]["window"]
+        self.window_1 = args["model"]["window_1"]
+        self.window_2 = args["model"]["window_2"]
+
     def forward(self, inputs) -> torch.Tensor:
         return self._net(inputs)
 

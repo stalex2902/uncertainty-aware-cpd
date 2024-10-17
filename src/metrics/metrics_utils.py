@@ -381,7 +381,7 @@ def get_models_predictions(
     :param inputs: input data
     :param labels: true labels
     :param model: CPD model
-    :param model_type: default "seq2seq" for BCE model, "klcpd" for KLCPD model
+    :param model_type: default "seq2seq" for BCE/InDiD model, TODO
     :param device: device name
     :param scales: scale parameter for KL-CPD predictions
     :param q: probability for quantile-based predictions of the EnsembleCPDModel, set to 'None' is no ensemble is used

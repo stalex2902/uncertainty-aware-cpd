@@ -23,7 +23,7 @@ def evaluate_distance_thresholds_range(
     calibrate: bool = False,
     ensemble_num: int = 1,
     distance: str = "wasserstein_1d",
-    threshold_number_list: List[int] = [1, 3, 5, 7, 9, 15, 20, 30, 50, 100, 200],
+    threshold_number_list: List[int] = [1, 3, 5, 7, 9, 15, 20, 25, 30, 40, 50],
     seed: int = 42,
     verbose: bool = True,
     save_df: bool = False,
@@ -53,12 +53,7 @@ def evaluate_distance_thresholds_range(
         else:
             raise ValueError(f"Wrong loss type {loss_type}")
 
-        # scale, step, alpha = None, 1, 1.0
-
-        if experiments_name == "synthetic_1D":
-            pass
-
-        elif experiments_name == "human_activity":
+        if experiments_name == "human_activity":
             if loss_type == "bce":
                 path_to_models_folder = (
                     f"saved_models/bce/human_activity/full_sample/ens_{ensemble_num}"
@@ -72,9 +67,10 @@ def evaluate_distance_thresholds_range(
             if loss_type == "bce":
                 path_to_models_folder = f"saved_models/bce/explosion/layer_norm/train_anomaly_num_155/ens_{ensemble_num}"
                 args_config["model"]["ln_type"] = "after"
+
             elif loss_type == "indid":
                 path_to_models_folder = (
-                    f"saved_models/indid/explosion/ens_{ensemble_num}"
+                    f"saved_models/indid/explosion/layer_norm_before/ens_{ensemble_num}"
                 )
                 args_config["model"]["ln_type"] = "before"
 
@@ -85,16 +81,13 @@ def evaluate_distance_thresholds_range(
                 )
                 args_config["model"]["ln_type"] = "after"
             elif loss_type == "indid":
-                path_to_models_folder = (
-                    f"saved_models/indid/road_accidents/ens_{ensemble_num}"
-                )
+                path_to_models_folder = f"saved_models/indid/road_accidents/layer_norm_before/ens_{ensemble_num}"
                 args_config["model"]["ln_type"] = "before"
-
         else:
             raise ValueError(f"Wrong experiments name {experiments_name}")
 
     elif model_type == "tscp":
-        scale, step, alpha = args_config["predictions"].values()
+        # scale, step, alpha = args_config["predictions"].values()
 
         if experiments_name == "synthetic_1D":
             pass
@@ -169,7 +162,7 @@ def evaluate_distance_thresholds_range(
 
     out_dataset = AllModelsOutputDataset(test_out_bank, test_labels_bank)
 
-    test_dataloader = DataLoader(out_dataset, batch_size=128, shuffle=False)  # batch
+    test_dataloader = DataLoader(out_dataset, batch_size=128, shuffle=False)
 
     if verbose:
         print("Evaluating dustance-based approach:")
@@ -203,9 +196,9 @@ def evaluate_distance_thresholds_range(
             min_value = torch.quantile(mmd_sample, 0.05).item()
             max_value = torch.quantile(mmd_sample, 0.95).item()
 
-            threshold_list_dist = np.linspace(min_value, max_value, threshold_number)
-
-            # threshold_list_dist = np.linspace(min_value, max_value, threshold_number + 2)[1:-1]
+            threshold_list_dist = np.linspace(
+                min_value, max_value, threshold_number + 2
+            )[1:-1]
 
         res_dist = all_distances_evaluation_pipeline(
             ens_model,
@@ -214,14 +207,14 @@ def evaluate_distance_thresholds_range(
             distance=distance,
             device=device,
             verbose=verbose,
-            window_size_list=[1, 2, 3],
+            window_size_list=args_config["distance"]["window_size_list"],
             margin_list=args_config["evaluation"]["margin_list"],
             anchor_window_type_list=args_config["distance"]["anchor_window_type_list"],
             threshold_list=threshold_list_dist,
         )
 
         # extract metrics for distances
-        best_f1_start, best_f1_prev = 0, 0
+        best_f1_start, best_f1_prev = -np.inf, -np.inf
         best_res_start, best_res_prev = None, None
         best_ws_start, best_ws_prev = None, None
         best_th_start, best_th_prev = None, None
@@ -311,7 +304,7 @@ def evaluate_distance_thresholds_range(
         if calibrate:
             model_name += "_calibrated"
 
-        save_path = f"results/final_results/{experiments_name}/{model_name}_ens_num_{ensemble_num}_{experiments_name}_{distance}_th_num_range.csv"
+        save_path = f"results/final_results/{experiments_name}/th_range_final/{model_name}_ens_num_{ensemble_num}_{experiments_name}_{distance}_th_num_range.csv"
         results_df.to_csv(save_path)
 
     return results_df
@@ -324,7 +317,7 @@ def evaluate_distance_thresholds_range_all_ensembles(
     n_models: int = 10,
     calibrate: bool = False,
     distance: str = "wasserstein_1d",
-    threshold_number_list: List[int] = [1, 3, 5, 7, 9, 15, 20, 30, 50, 100, 200],
+    threshold_number_list: List[int] = [1, 3, 5, 7, 9, 15, 20, 25, 30, 40, 50],
     seed: int = 42,
     verbose: bool = True,
     save_df: bool = False,
@@ -359,5 +352,5 @@ def evaluate_distance_thresholds_range_all_ensembles(
         if calibrate:
             model_name += "_calibrated"
 
-        save_path = f"results/final_results/{experiments_name}/{model_name}_calibrated_{calibrate}_all_ensembles_{experiments_name}_{distance}_th_range.csv"
+        save_path = f"results/final_results/{experiments_name}/th_range_final/{model_name}_calibrated_{calibrate}_all_ensembles_{experiments_name}_{distance}_th_range.csv"
         results_df.to_csv(save_path)
